@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: dr_spaam
+Version: 1.2.0
+Summary: DR-SPAAM, a deep-learning based person detector for 2D range data.
+Author: Dan Jia
+Author-email: jia@vision.rwth-aachen.de
+License: LICENSE.txt
+Dynamic: author
+Dynamic: author-email
+Dynamic: license
+Dynamic: summary
