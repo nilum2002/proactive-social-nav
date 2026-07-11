@@ -4,3 +4,8 @@ ros2_ws/install
 ros2_ws/log
 self_supervised_person_detection-20260705T040103Z-3-001/
 venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
