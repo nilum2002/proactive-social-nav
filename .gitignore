@@ -9,3 +9,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+dr_spaam/build/
+dr_spaam_ros2/build/
+dr_spaam_ros2/install/
+dr_spaam_ros2/log/
