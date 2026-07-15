@@ -1,0 +1,350 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+    <model name='qbot' canonical_link='base_link'>
+        <pose>0 0 0 0 0 0</pose>
+        <!-- <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+            <left_joint>wheel_left_joint</left_joint>
+            <right_joint>wheel_right_joint</right_joint>
+            <wheel_separation>0.24</wheel_separation>
+            <wheel_radius>0.08</wheel_radius>
+            <topic>/model/qbot/cmd_vel</topic>
+            <odom_topic>/model/qbot/odometry</odom_topic>
+            <tf_topic>/model/qbot/tf</tf_topic>
+            <frame_id>odom</frame_id>
+            <child_frame_id>base_link</child_frame_id>
+        </plugin> -->
+
+        <plugin filename="libgz_ros2_control-system.so" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+            <parameters>/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/ros2_ws/install/qbot_description/share/qbot_description/config/qbot_controllers.yaml</parameters>
+        </plugin>
+
+        <ros2_control name='qbot_system' type='system'>
+        <hardware>
+            <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+        </hardware>
+            <joint name="wheel_left_joint">
+                <command_interface name="velocity">
+                    <param name="min">-10</param>
+                    <param name="max">10</param>
+                </command_interface>
+                <state_interface name="position"/>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="wheel_right_joint">
+                <command_interface name="velocity">
+                    <param name="min">-10</param>
+                    <param name="max">10</param>
+                </command_interface>
+                <state_interface name="position"/>
+                <state_interface name="velocity"/>
+            </joint>
+        </ros2_control>
+        
+
+        <!-- Base -->
+        <link name='base_link'>
+            <pose>0 0 0.05949 0 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>2.4</mass>
+                <inertia>
+                    <ixx>0.019995</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.019995</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.03675</izz>
+                </inertia>
+            </inertial>
+            <visual name='base_visual'>
+                <!-- TODO: Add geometry-->
+                <geometry>
+                    <cylinder>
+                        <radius>0.178</radius>
+                        <length>0.10938</length>
+                    </cylinder>
+                </geometry>
+                <material>
+                    <ambient>0.0 0.0 0.8 1</ambient>
+                    <diffuse>0.0 0.0 0.8 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='base_collision'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.178</radius>
+                        <length>0.10938</length>
+                    </cylinder>
+                </geometry>
+            </collision>
+        </link>
+
+        <!-- Left wheel -->
+        <link name='wheel_left_link'>
+            <pose relative_to='base_link'>0 0.193 -0.0245 -1.57079632679 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>0.01</mass>
+                <inertia>
+                    <ixx>0.001</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.001</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.001</izz>
+                </inertia>
+            </inertial>
+            <visual name='wheel_left_visual'>
+                <!-- TODO: Add geometry-->
+                <geometry>
+                    <cylinder>
+                        <radius>0.05</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+                <material>
+                    <ambient>0.8 0.0 0.0 1</ambient>
+                    <diffuse>0.8 0.0 0.0 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='wheel_left_collision'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.05</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+            </collision>
+        </link>
+
+        <!-- Right wheel -->
+        <link name='wheel_right_link'>
+            <pose relative_to='base_link'>0 -0.193 -0.0245 -1.57079632679 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>0.01</mass>
+                <inertia>
+                    <ixx>0.001</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.001</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.001</izz>
+                </inertia>
+            </inertial>
+            <visual name='wheel_right_visual'>
+                <!-- TODO: Add geometry-->
+                <geometry>
+                    <cylinder>
+                        <radius>0.05</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+                <material>
+                    <ambient>0.0 0.8 0.0 1</ambient>
+                    <diffuse>0.0 0.8 0.0 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='wheel_right_collision'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.05</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+            </collision>
+        </link>
+
+        <!-- Front caster -->
+        <link name='caster_front_link'>
+            <pose relative_to='base_link'>0.115 0 -0.0485 -1.57079632679 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>0.01</mass>
+                <inertia>
+                    <ixx>0.001</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.001</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.001</izz>
+                </inertia>
+            </inertial>
+            <visual name='caster_front_visual'>
+                <!-- TODO: Add geometry-->
+                <geometry>
+                    <cylinder>
+                        <radius>0.025</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+                <material>
+                    <ambient>0.8 0.8 0.0 1</ambient>
+                    <diffuse>0.8 0.8 0.0 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='caster_front_collision'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.025</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+            </collision>
+        </link>
+
+        <!-- Back caster -->
+        <link name='caster_back_link'>
+            <pose relative_to='base_link'>-0.135 0 -0.0485 -1.57079632679 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>0.01</mass>
+                <inertia>
+                    <ixx>0.001</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.001</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.001</izz>
+                </inertia>
+            </inertial>
+            <visual name='caster_back_visual'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.025</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+                <material>
+                    <ambient>0.8 0.0 0.8 1</ambient>
+                    <diffuse>0.8 0.0 0.8 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='caster_back_collision'>
+                <geometry>
+                    <cylinder>
+                        <radius>0.025</radius>
+                        <length>0.03</length>
+                    </cylinder>
+                </geometry>
+            </collision>
+        </link>
+
+        <!-- Sensor mount -->
+        <link name='sensor_mount_link'>
+            <pose relative_to='base_link'>0 0 0.35 0 0 0</pose>
+            <inertial>
+                <!-- TODO: Add mass-->
+                <mass>0.001</mass>
+                <inertia>
+                    <ixx>0.0001</ixx>
+                    <ixy>0</ixy>
+                    <ixz>0</ixz>
+                    <iyy>0.000001</iyy>
+                    <iyz>0</iyz>
+                    <izz>0.0001</izz>
+                </inertia>
+            </inertial>
+            <visual name='sensor_mount_visual'>
+                <!-- TODO: Add geometry-->
+                <geometry>
+                    <box>
+                        <size>0.08 0.12 0.05</size>
+                    </box>
+                </geometry>
+                <material>
+                    <ambient>0.0 0.8 0.8 1</ambient>
+                    <diffuse>0.0 0.8 0.8 1</diffuse>
+                    <specular>1 1 1 1</specular>
+                </material>
+            </visual>
+            <!-- TODO: Add collision geometry-->
+            <collision name='sensor_mount_collision'>
+                <geometry>
+                    <box>
+                        <size>0.08 0.12 0.05</size>
+                    </box>
+                </geometry>
+            </collision>
+            <sensor name='lidar' type='gpu_lidar'>
+                <topic>/scan</topic>
+                <update_rate>10</update_rate>
+                <always_on>1</always_on>
+                <visualize>true</visualize>
+                <pose relative_to='sensor_mount_link'>0 0 0 0 0 0</pose>
+                <gz_frame_id>sensor_mount_link</gz_frame_id> 
+                <lidar>
+                    <scan>
+                        <horizontal>
+                            <samples>360</samples>
+                            <resolution>1</resolution>
+                            <min_angle>-3.14159</min_angle>
+                            <max_angle>3.14159</max_angle>
+                        </horizontal>
+                    </scan>
+                    <range>
+                        <min>0.12</min>
+                        <max>10.0</max>
+                        <resolution>0.01</resolution>
+                    </range>
+                    <noise>
+                        <type>gaussian</type>
+                        <mean>0.0</mean>
+                        <stddev>0.01</stddev>
+                    </noise>
+                </lidar>
+            </sensor>
+        </link>
+
+        <!-- Wheel Joints -->
+        <joint name='wheel_left_joint' type='revolute'>
+            <parent>base_link</parent>
+            <child>wheel_left_link</child>
+            <axis>
+                <xyz>0 0 1</xyz>
+                <limit>
+                    <lower>-1.79769e+308</lower>
+                    <upper>1.79769e+308</upper>
+                </limit>
+            </axis>
+        </joint>
+
+        <joint name='wheel_right_joint' type='revolute'>
+            <parent>base_link</parent>
+            <child>wheel_right_link</child>
+            <axis>
+                <xyz>0 0 1</xyz>
+                <limit>
+                    <lower>-1.79769e+308</lower>
+                    <upper>1.79769e+308</upper>
+                </limit>
+            </axis>
+        </joint>
+        <!-- Castor Joints -->
+        <joint name='caster_front_joint' type='fixed'>
+            <parent>base_link</parent>
+            <child>caster_front_link</child>
+
+        </joint>
+
+        <joint name='caster_back_joint' type='fixed'>
+            <parent>base_link</parent>
+            <child>caster_back_link</child>
+        </joint>
+        <!-- Other Joints -->
+        <joint name='sensor_mount_joint' type='fixed'>
+            <parent>base_link</parent>
+            <child>sensor_mount_link</child>
+        </joint>
+    </model>
+</sdf>
