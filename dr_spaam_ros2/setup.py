@@ -24,7 +24,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'dr_spaam_ros2_node = dr_spaam_ros2.dr_spaam_ros2_node:main'
+            'dr_spaam_ros2_node = dr_spaam_ros2.dr_spaam_ros2_node:main',
+            'dr_spaam_ros2_node_debug = dr_spaam_ros2.dr_spaam_ros2_node_debug:main',
         ],
     },
 )
