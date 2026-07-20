@@ -1,0 +1,17 @@
+mynotes.md
+ros2_ws/build
+ros2_ws/install
+ros2_ws/log
+self_supervised_person_detection-20260705T040103Z-3-001/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+dr_spaam/build/
+dr_spaam_ros2/build/
+dr_spaam_ros2/install/
+dr_spaam_ros2/log/
+venv/
+.vscode/
