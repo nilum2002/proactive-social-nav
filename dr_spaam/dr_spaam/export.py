@@ -21,7 +21,7 @@ model = DrSpaam(
                 mixup_alpha=0.0,
                 mixup_w=0.0,
             )
-path = "/home/nilum/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
+path = "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
 model.load_state_dict(torch.load(path, map_location="cpu")["model_state"])
 model.eval()
 
@@ -57,9 +57,7 @@ print(f"Export input shape: {dummy_tensor.shape}")
 
 exported_program = export(
     model,
-    (dummy_tensor,),
-    kwargs={"inference": True},
-    strict=False,
+    (dummy_tensor,)
 )
 
 executorch_program = to_edge_transform_and_lower(
@@ -67,7 +65,7 @@ executorch_program = to_edge_transform_and_lower(
     partitioner=[XnnpackPartitioner()],
 ).to_executorch()
 
-output_path = "/home/nilum/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pte"
+output_path = "model.pte"
 with open(output_path, "wb") as file:
     file.write(executorch_program.buffer)
 print(f"Exported to {output_path}")
