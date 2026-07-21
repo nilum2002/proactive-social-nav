@@ -8,7 +8,7 @@ from executorch.exir import to_edge_transform_and_lower
 from torch.export import export
 
 # Number of scan points from the LD19 LiDAR
-NUM_SCAN_POINTS = 504
+NUM_SCAN_POINTS = 501
 
 model = DrSpaam(
                     dropout=0.5,
