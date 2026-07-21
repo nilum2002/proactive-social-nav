@@ -7,8 +7,10 @@ from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPar
 from executorch.exir import to_edge_transform_and_lower
 from torch.export import export
 
-# Number of scan points from the LD19 LiDAR
-NUM_SCAN_POINTS = 501
+# Fixed number of scan points for ExecuTorch static shape.
+# Must be >= the maximum number of points your LiDAR can produce.
+# LD19 at ~0.72° increment produces ~500-505 points. 512 gives comfortable margin.
+FIXED_SCAN_POINTS = 512
 
 model = DrSpaam(
                     dropout=0.5,
@@ -21,14 +23,14 @@ model = DrSpaam(
                 mixup_alpha=0.0,
                 mixup_w=0.0,
             )
-path = "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
+path = "/home/nilum/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
 model.load_state_dict(torch.load(path, map_location="cpu")["model_state"])
 model.eval()
 
 # Initialize memory by running one dummy pass first
 with torch.no_grad():
-    init_scan = np.ones((1, NUM_SCAN_POINTS), dtype=np.float32) * 5.0
-    init_phi = np.linspace(-np.pi, np.pi, NUM_SCAN_POINTS, dtype=np.float32)
+    init_scan = np.ones((1, FIXED_SCAN_POINTS), dtype=np.float32) * 5.0
+    init_phi = np.linspace(-np.pi, np.pi, FIXED_SCAN_POINTS, dtype=np.float32)
     init_ct = u.scans_to_cutout(
         init_scan, init_phi, stride=1, centered=True, fixed=True,
         window_width=1.0, window_depth=0.5, num_cutout_pts=56,
@@ -37,8 +39,8 @@ with torch.no_grad():
     init_tensor = torch.from_numpy(init_ct).float().unsqueeze(0)
     model(init_tensor, inference=True)  # seeds the internal memory
 
-dummy_scan = np.ones((1, NUM_SCAN_POINTS), dtype=np.float32)*5.0
-dummy_phi = np.linspace(-np.pi, np.pi, NUM_SCAN_POINTS, dtype=np.float32)
+dummy_scan = np.ones((1, FIXED_SCAN_POINTS), dtype=np.float32) * 5.0
+dummy_phi = np.linspace(-np.pi, np.pi, FIXED_SCAN_POINTS, dtype=np.float32)
 dummy_ct = u.scans_to_cutout(
                 dummy_scan,
                 dummy_phi,
@@ -53,7 +55,7 @@ dummy_ct = u.scans_to_cutout(
             )
 
 dummy_tensor = torch.from_numpy(dummy_ct).float().unsqueeze(0)
-print(f"Export input shape: {dummy_tensor.shape}")
+print(f"Export input shape: {dummy_tensor.shape}  (fixed to {FIXED_SCAN_POINTS} cutouts)")
 
 exported_program = export(
     model,
