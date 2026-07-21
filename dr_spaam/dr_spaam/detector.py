@@ -19,7 +19,7 @@ class Detector(object):
             stride (int): Downsample scans for faster inference.
             panoramic_scan (bool): True if the scan covers 360 degree.
         """
-        self._gpu = gpu
+        self._gpu = gpu and torch.cuda.is_available()
         self._stride = stride
         self._use_dr_spaam = model == "DR-SPAAM"
 
@@ -49,13 +49,51 @@ class Detector(object):
                 )
             )
 
-        ckpt = torch.load(ckpt_file)
+        ckpt = torch.load(ckpt_file, map_location="cpu")
         self._model.load_state_dict(ckpt["model_state"])
 
         self._model.eval()
-        if gpu:
+        if gpu and torch.cuda.is_available():
             torch.backends.cudnn.benchmark = True
             self._model = self._model.cuda()
+
+        # Limit PyTorch to single thread to avoid conflicts with ROS 2 executor threads
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+
+        # Warmup: run a dummy forward pass in the main thread so that all
+        # PyTorch JIT compilation and thread-pool initialization happens NOW,
+        # not lazily inside a ROS 2 callback thread (which causes SIGILL).
+        self._warmup(panoramic_scan)
+
+    def _warmup(self, panoramic_scan):
+        """Run a dummy forward pass to pre-initialize PyTorch internals."""
+        try:
+            num_pts = 720 if panoramic_scan else 360
+            dummy_scan = np.ones((1, num_pts), dtype=np.float32) * 5.0
+            dummy_phi  = np.linspace(-np.pi, np.pi, num_pts, dtype=np.float32)
+            dummy_ct   = u.scans_to_cutout(
+                dummy_scan,
+                dummy_phi,
+                stride=self._stride,
+                centered=True,
+                fixed=True,
+                window_width=1.0,
+                window_depth=0.5,
+                num_cutout_pts=56,
+                padding_val=29.99,
+                area_mode=True,
+            )
+            dummy_tensor = torch.from_numpy(dummy_ct).float()
+            if self._gpu:
+                dummy_tensor = dummy_tensor.cuda()
+            with torch.no_grad():
+                if self._use_dr_spaam:
+                    self._model(dummy_tensor.unsqueeze(dim=0), inference=True)
+                else:
+                    self._model(dummy_tensor.unsqueeze(dim=0))
+        except Exception:
+            pass  # warmup failure is non-fatal
 
     def __call__(self, scan, scan_phi=None):
         if scan_phi is not None:
