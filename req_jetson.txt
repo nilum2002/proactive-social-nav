@@ -1,0 +1,8 @@
+# Jetson Nano (Python 3.6 / JetPack 4.6) Requirements
+# Pre-compiled C/C++ packages (matplotlib, scipy, numpy, yaml) are installed via apt
+# to avoid building from source on ARM64.
+
+tqdm
+scikit-learn
+tensorboardX
+python-lzf
