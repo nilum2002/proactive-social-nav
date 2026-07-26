@@ -1,7 +1,7 @@
 import numpy as np
 from dr_spaam.detector import Detector
 
-ckpt = '/media/nilum/my-stuff/Research/Human_Robot_Interaction/2D_lidar_person_detection/self_supervised_person_detection-20260705T040103Z-3-001/self_supervised_person_detection/ckpt_jrdb_ann_dr_spaam_e20.pth'
+ckpt = '/home/nilum/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth'
 detector = Detector(
     ckpt,
     model="DR-SPAAM",          # Or DROW3
