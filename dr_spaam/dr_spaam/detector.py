@@ -1,7 +1,6 @@
-import os
 import torch
 import numpy as np
-from executorch.runtime import Runtime
+
 from dr_spaam.model.drow_net import DrowNet
 from dr_spaam.model.dr_spaam import DrSpaam
 from dr_spaam.utils import utils as u
@@ -9,97 +8,54 @@ from dr_spaam.utils import utils as u
 
 class Detector(object):
     def __init__(
-        self, ckpt_file=None, model="DROW3", gpu=True, stride=1, panoramic_scan=False
+        self, ckpt_file, model="DROW3", gpu=True, stride=1, panoramic_scan=False
     ):
         """A warpper class around DROW3 or DR-SPAAM network for end-to-end inference.
 
         Args:
-            ckpt_file (str, optional): Path to checkpoint. Defaults to None.
+            ckpt_file (str): Path to checkpoint
             model (str): Model name, "DROW3" or "DR-SPAAM".
             gpu (bool): True to use GPU. Defaults to True.
             stride (int): Downsample scans for faster inference.
             panoramic_scan (bool): True if the scan covers 360 degree.
         """
-        # ExecuTorch model runs on CPU (XNNPACK backend)
-        self._gpu = False
+        self._gpu = gpu
         self._stride = stride
         self._use_dr_spaam = model == "DR-SPAAM"
 
         self._scan_phi = None
         self._laser_fov_deg = None
 
-        # if model == "DROW3":
-        #     self._model = DrowNet(
-        #         dropout=0.5, cls_loss=None, mixup_alpha=0.0, mixup_w=0.0
-        #     )
-        # elif model == "DR-SPAAM":
-        #     self._model = DrSpaam(
-        #         dropout=0.5,
-        #         num_pts=56,
-        #         embedding_length=128,
-        #         alpha=0.5,
-        #         window_size=17,
-        #         panoramic_scan=panoramic_scan,
-        #         cls_loss=None,
-        #         mixup_alpha=0.0,
-        #         mixup_w=0.0,
-        #     )
-        # else:
-        #     raise NotImplementedError(
-        #         "model should be 'DROW3' or 'DR-SPAAM', received {} instead.".format(
-        #             model
-        #         )
-        #     )
-
-
-        self.runtime = Runtime.get()
-
-        # Load program relative to this file
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        model_path = os.path.join(dir_path, "model.pte")
-        self.program = self.runtime.load_program(model_path)
-        self.method = self.program.load_method("forward")
-        # if gpu and torch.cuda.is_available():
-        #     torch.backends.cudnn.benchmark = True
-        #     self._model = self._model.cuda()
-
-        # Limit PyTorch to single thread to avoid conflicts with ROS 2 executor threads
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
-
-        # Warmup: run a dummy forward pass in the main thread so that all
-        # PyTorch JIT compilation and thread-pool initialization happens NOW,
-        # not lazily inside a ROS 2 callback thread (which causes SIGILL).
-        self._warmup(panoramic_scan)
-
-    def _warmup(self, panoramic_scan):
-        """Run a dummy forward pass to pre-initialize PyTorch internals."""
-        try:
-            num_pts = 720 if panoramic_scan else 360
-            dummy_scan = np.ones((1, num_pts), dtype=np.float32) * 5.0
-            dummy_phi  = np.linspace(-np.pi, np.pi, num_pts, dtype=np.float32)
-            dummy_ct   = u.scans_to_cutout(
-                dummy_scan,
-                dummy_phi,
-                stride=self._stride,
-                centered=True,
-                fixed=True,
-                window_width=1.0,
-                window_depth=0.5,
-                num_cutout_pts=56,
-                padding_val=29.99,
-                area_mode=True,
+        if model == "DROW3":
+            self._model = DrowNet(
+                dropout=0.5, cls_loss=None, mixup_alpha=0.0, mixup_w=0.0
             )
-            dummy_tensor = torch.from_numpy(dummy_ct).float()
-            if self._gpu:
-                dummy_tensor = dummy_tensor.cuda()
-            with torch.no_grad():
-                if self._use_dr_spaam:
-                    self._model(dummy_tensor.unsqueeze(dim=0), inference=True)
-                else:
-                    self._model(dummy_tensor.unsqueeze(dim=0))
-        except Exception:
-            pass  # warmup failure is non-fatal
+        elif model == "DR-SPAAM":
+            self._model = DrSpaam(
+                dropout=0.5,
+                num_pts=56,
+                embedding_length=128,
+                alpha=0.5,
+                window_size=17,
+                panoramic_scan=panoramic_scan,
+                cls_loss=None,
+                mixup_alpha=0.0,
+                mixup_w=0.0,
+            )
+        else:
+            raise NotImplementedError(
+                "model should be 'DROW3' or 'DR-SPAAM', received {} instead.".format(
+                    model
+                )
+            )
+
+        ckpt = torch.load(ckpt_file)
+        self._model.load_state_dict(ckpt["model_state"])
+
+        self._model.eval()
+        if gpu:
+            torch.backends.cudnn.benchmark = True
+            self._model = self._model.cuda()
 
     def __call__(self, scan, scan_phi=None):
         if scan_phi is not None:
@@ -155,7 +111,3 @@ class Detector(object):
 
     def is_ready(self):
         return self._laser_fov_deg is not None
-
-    def _model(self, input_tensor, inference=False):
-        outputs = self.method.execute([input_tensor])
-        return outputs
