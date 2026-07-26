@@ -132,6 +132,15 @@ class DrSpaamROS2(Node):
 
         scan_phi = msg.angle_min + np.arange(len(msg.ranges)) * msg.angle_increment
 
+        # Pad the scan and corresponding angles to 512
+        if len(scan) < 512:
+            pad_len = 512 - len(scan)
+            scan = np.pad(scan, (0, pad_len), mode='constant', constant_values=29.99)
+            scan_phi = np.pad(scan_phi, (0, pad_len), mode='constant', constant_values=0.0)
+        elif len(scan) > 512:
+            scan = scan[:512]
+            scan_phi = scan_phi[:512]
+
         # ── 3. Inference ──────────────────────────────────────────────────────
         dets_xy, dets_cls, _ = self._detector(scan, scan_phi=scan_phi)
         dets_cls_flat = dets_cls.reshape(-1)
