@@ -39,11 +39,12 @@ sudo apt upgrade
 sudo apt install ros-jazzy-desktop
 
 source /opt/ros/jazzy/setup.bash
-
+echo "Setup colcon"
+sudo apt install python3-colcon-common-extensions
 echo "Starting ROS 2 Talker node for 10 seconds..."
 
 # Runs the command and sends SIGINT (Ctrl+C) after 10 seconds
-timeout --signal=SIGINT 10s ros2 run demo_nodes_cpp talker
+#timeout --signal=SIGINT 10s ros2 run demo_nodes_cpp talker
 
 echo "Talker node stopped cleanly."
 
