@@ -73,6 +73,13 @@ echo "##############################"
 
 cd ..
 
+echo "######## Enable SSH ###########"
+
+sudo apt install openssh-server -y
+sudo systemctl enable --now ssh
+
+
+
 
 echo "##############################"
 echo "#         All Done           #"
