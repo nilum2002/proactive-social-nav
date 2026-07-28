@@ -34,7 +34,7 @@ RPI_IP = "192.168.2.1"          # RPi 4 IP Address (Ethernet)
 RPI_PORT = 50051                 # gRPC Port
 MODEL_PATH = "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
 CONF_THRESH = 0.7
-MAX_RANGE_M = 1.0                # 1-meter detection boundary
+MAX_RANGE_M = 2                  # 1-meter detection boundary
 FOV_DEG = 270.0                  # 270° scan crop
 
 # ── Tracker Config ─────────────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package tracked_people;
+
+// A single tracked pedestrian
+message TrackedPerson {
+  int32  track_id  = 1;
+  float  x         = 2;  // current position X (m)
+  float  y         = 3;  // current position Y (m)
+  float  vx        = 4;  // velocity X (m/s)
+  float  vy        = 5;  // velocity Y (m/s)
+  float  future_x  = 6;  // predicted X at t+horizon (m)
+  float  future_y  = 7;  // predicted Y at t+horizon (m)
+  float  speed     = 8;  // speed magnitude (m/s)
+}
+
+// One frame of all active tracks at a single time step
+message TrackedPeopleFrame {
+  double                 timestamp = 1;
+  repeated TrackedPerson people    = 2;
+}
+
+// Empty request — RPi sends this once and receives a continuous stream
+message TrackingRequest {}
+
+// Jetson Nano hosts this service; RPi is the client
+service TrackedPeopleService {
+  rpc StreamTrackedPeople(TrackingRequest) returns (stream TrackedPeopleFrame);
+}

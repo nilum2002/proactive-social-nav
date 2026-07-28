@@ -20,3 +20,6 @@ typeguard
 # tf2_msgs
 # rosbag
 # catkin_pkg
+
+pip install --upgrade pip setuptools wheel
+pip install grpcio grpcio-tools
