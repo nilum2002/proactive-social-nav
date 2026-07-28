@@ -80,7 +80,7 @@ sudo systemctl enable --now ssh
 
 
 
-
+sudo python3 -m pip  install --break-system-packages grpcio grpcio-tools
 echo "##############################"
 echo "#         All Done           #"
 echo "##############################"
