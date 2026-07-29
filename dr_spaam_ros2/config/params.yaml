@@ -2,7 +2,7 @@ dr_spaam_ros2_node:
   ros__parameters:
     weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
     detector_model: "DR-SPAAM"
-    conf_thresh: 0.7
+    conf_thresh: 0.9
     stride: 1
     panoramic_scan: true
     scan_topic: "/scan"
@@ -35,9 +35,12 @@ dr_spaam_tracker_node:
     std_a_y: 0.8                 # Process acceleration noise Y (m/s^2) — MUST be > 0
     r_laser: 0.20
     prediction_horizon: 1.0
+    confirm_frames: 4  # Consecutive matches before a track is confirmed ACTIVE (lower = faster, less certain)
 
     # Static object filter — removes false positives from walls/glass/furniture
-    static_speed_threshold:  0.08  # Speed below this (m/s) is considered static
+    static_speed_threshold:  0.05  # Speed below this (m/s) is considered static
     static_frames_required: 8    # Must be static for this many consecutive frames
+
+    lidar_radius_m: 1.0  # Radius (m) of the reference circle drawn around the lidar in RViz
 
 
