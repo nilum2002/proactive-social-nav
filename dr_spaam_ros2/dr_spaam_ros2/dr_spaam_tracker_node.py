@@ -2,6 +2,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.duration import Duration
+from rclpy.time import Time
 from geometry_msgs.msg import Point, Pose, PoseArray, Vector3
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
@@ -143,12 +144,14 @@ class Track:
     # Smooths the prediction arrow direction without touching position tracking.
     _VEL_ALPHA = 0.35
 
-    def __init__(self, track_id, position, std_a_x, std_a_y, r_laser):
+    def __init__(self, track_id, position, std_a_x, std_a_y, r_laser, confirm_frames):
         self.id = track_id
         # Initialize state with position and zero velocity
         x_init = [position[0], position[1], 0.0, 0.0]
         self.kf = KalmanFilter(x_init, std_a_x, std_a_y, r_laser)
 
+        # Consecutive matched updates required before this track is published as ACTIVE.
+        self.confirm_frames = confirm_frames
         self.age = 1
         self.lost_count = 0
         self.static_count = 0       # Consecutive frames where speed < threshold
@@ -165,9 +168,9 @@ class Track:
         self.kf.update(position)
         self.lost_count = 0
         self.age += 1
-        # Require 5 consecutive matches before publishing — filters out DR-SPAAM spurious blips
-        # that appear for 1–3 frames then vanish (walls, glass, passing objects).
-        if self.state == "TENTATIVE" and self.age >= 5:
+        # Require confirm_frames consecutive matches before publishing — filters out DR-SPAAM
+        # spurious blips that appear for a few frames then vanish (walls, glass, passing objects).
+        if self.state == "TENTATIVE" and self.age >= self.confirm_frames:
             self.state = "ACTIVE"
 
         # Update smoothed velocity for prediction (EMA — does not affect KF state)
@@ -230,10 +233,16 @@ class DrSpaamTrackerNode(Node):
         self.declare_parameter("std_a_y", 1.5)                 # Process acceleration noise Y
         self.declare_parameter("r_laser", 0.20)                # Measurement noise (std dev)
         self.declare_parameter("prediction_horizon", 1.5)      # Prediction time horizon (seconds)
+        # Consecutive matched frames before a new track is confirmed ACTIVE and published.
+        # Lower = faster to show up as tracked, but more likely to confirm a spurious blip.
+        self.declare_parameter("confirm_frames", 5)
 
         # Static object filter parameters
         self.declare_parameter("static_speed_threshold", 0.15)  # Speed below this (m/s) is considered static
         self.declare_parameter("static_frames_required", 15)    # Consecutive static frames before removal
+
+        # Reference circle drawn around the lidar origin (visualization only)
+        self.declare_parameter("lidar_radius_m", 1.0)
 
         # Extract values
         self.dets_topic = self.get_parameter("detections_topic").get_parameter_value().string_value
@@ -247,8 +256,10 @@ class DrSpaamTrackerNode(Node):
         self.std_a_y = self.get_parameter("std_a_y").get_parameter_value().double_value
         self.r_laser = self.get_parameter("r_laser").get_parameter_value().double_value
         self.prediction_horizon = self.get_parameter("prediction_horizon").get_parameter_value().double_value
+        self.confirm_frames = self.get_parameter("confirm_frames").get_parameter_value().integer_value
         self.static_speed_thresh = self.get_parameter("static_speed_threshold").get_parameter_value().double_value
         self.static_frames_req = self.get_parameter("static_frames_required").get_parameter_value().integer_value
+        self.lidar_radius_m = self.get_parameter("lidar_radius_m").get_parameter_value().double_value
 
         # ── State Initialization ─────────────────────────────────────────────
         self.tracks = []
@@ -275,6 +286,7 @@ class DrSpaamTrackerNode(Node):
             f"  Publishing RViz  : {self.markers_topic}\n"
             f"  Assoc. Threshold : {self.association_thresh}m\n"
             f"  Max Lost Frames  : {self.max_lost_frames}\n"
+            f"  Confirm Frames   : {self.confirm_frames}\n"
             f"  Pred. Horizon    : {self.prediction_horizon}s\n"
             f"  Static Filter    : speed<{self.static_speed_thresh}m/s for {self.static_frames_req} frames\n"
             f"  Hungarian Solver : {'Scipy Hungarian' if HAS_SCIPY else 'Greedy Matching'}"
@@ -287,14 +299,25 @@ class DrSpaamTrackerNode(Node):
             self.get_logger().error(f"[TRACKER] Exception in callback: {e}")
 
     def _process_detections(self, msg: PoseArray):
-        # 1. Compute time step dt
-        now = self.get_clock().now()
+        # 1. Compute time step dt from the SENSOR timestamp, not arrival time.
+        # dt scales F and Q, and velocity is effectively (position delta / dt), so any
+        # error here propagates straight into the velocity estimate. Callback arrival
+        # time includes network jitter and variable inference latency — over a WiFi
+        # link that is tens of ms of noise on a ~100 ms step. The header stamp is set
+        # once by the lidar driver, so successive stamps differ by the true scan
+        # interval regardless of transport delay. (Any constant clock offset between
+        # robot and laptop cancels in the difference.)
+        stamp = Time.from_msg(msg.header.stamp)
+        if stamp.nanoseconds == 0:
+            # Driver published an unset stamp — fall back to arrival time.
+            stamp = self.get_clock().now()
+
         if self.last_time is None:
-            self.last_time = now
+            self.last_time = stamp
             return
 
-        dt = (now - self.last_time).nanoseconds / 1e9
-        self.last_time = now
+        dt = (stamp - self.last_time).nanoseconds / 1e9
+        self.last_time = stamp
 
         # Avoid dt anomalies
         if dt <= 0.0 or dt > 2.0:
@@ -375,7 +398,9 @@ class DrSpaamTrackerNode(Node):
                     for (bx, by, _) in self.static_blacklist
                 )
                 if not is_blacklisted:
-                    new_track = Track(self.next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser)
+                    new_track = Track(
+                        self.next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser, self.confirm_frames
+                    )
                     self.tracks.append(new_track)
                     self.next_track_id += 1
 
@@ -426,6 +451,27 @@ class DrSpaamTrackerNode(Node):
 
         marker_array = MarkerArray()
         lifetime = Duration(seconds=0.5).to_msg()
+
+        # ── 0. Reference circle around the lidar origin ──────────────────────
+        circle = Marker()
+        circle.header = header
+        circle.ns = "lidar_range_circle"
+        circle.id = 0
+        circle.type = Marker.LINE_STRIP
+        circle.action = Marker.ADD
+        circle.scale.x = 0.02
+        circle.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.6)
+        num_segments = 36
+        circle.points = [
+            Point(
+                x=self.lidar_radius_m * np.cos(theta),
+                y=self.lidar_radius_m * np.sin(theta),
+                z=0.02,
+            )
+            for theta in np.linspace(0, 2 * np.pi, num_segments + 1)  # +1 closes the loop
+        ]
+        circle.lifetime = lifetime
+        marker_array.markers.append(circle)
 
         for track in self.tracks:
             if track.state != "ACTIVE":
