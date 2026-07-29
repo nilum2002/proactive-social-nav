@@ -1,0 +1,32 @@
+// Recovered from the checked-in generated modules (lidar_stream_pb2.py), which were
+// committed without their source .proto. Field numbers, types and the service
+// signature are taken verbatim from the serialized descriptor, so regenerating from
+// this file reproduces the existing lidar_stream_pb2*.py byte-for-byte.
+//
+// Regenerate with (from the package root, venv active):
+//   python -m grpc_tools.protoc -I proto --python_out=lidar_grpc_bridge \
+//       --grpc_python_out=lidar_grpc_bridge proto/lidar_stream.proto
+
+syntax = "proto3";
+
+package lidar;
+
+// One revolution of 2D laser data. Mirrors the subset of sensor_msgs/LaserScan that
+// DR-SPAAM actually consumes — no header frame_id, no intensities.
+message LaserScanData {
+  double timestamp = 1;       // seconds; from the source LaserScan header stamp
+  float angle_min = 2;        // rad
+  float angle_max = 3;        // rad
+  float angle_increment = 4;  // rad between consecutive samples
+  float range_min = 5;        // m
+  float range_max = 6;        // m
+  repeated float ranges = 7;  // m; may contain NaN/inf for no-return beams
+}
+
+message StreamRequest {}
+
+service LidarService {
+  // Server-streaming: the machine holding the lidar serves, the consumer connects
+  // in and pulls scans for as long as it keeps the call open.
+  rpc StreamScan(StreamRequest) returns (stream LaserScanData);
+}

@@ -1,0 +1,8 @@
+lidar_grpc_server_node:
+  ros__parameters:
+    scan_topic: "/scan"
+    bind_address: "0.0.0.0"   # 0.0.0.0 so the consumer at 192.168.0.200 can reach us
+    port: 50051
+    max_clients: 4            # thread pool is sized to this + 2
+    max_message_mb: 10
+    status_log_period_s: 5.0  # 0.0 disables the periodic rate/client log
