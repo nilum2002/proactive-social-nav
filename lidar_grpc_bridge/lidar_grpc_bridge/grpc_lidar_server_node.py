@@ -2,7 +2,7 @@
 
 Bridges ROS2 sensor_msgs/LaserScan onto the gRPC LidarService defined in
 proto/lidar_stream.proto, so an off-board machine (e.g. the inference laptop at
-192.168.0.200) can pull the live scan stream without needing ROS2 on the network.
+192.168.0.196) can pull the live scan stream without needing ROS2 on the network.
 
 Direction of travel: StreamScan is a SERVER-streaming RPC, so the machine holding
 the lidar — this node — is the gRPC server, and the consumer dials in and pulls.
