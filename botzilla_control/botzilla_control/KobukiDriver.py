@@ -35,15 +35,14 @@ class Kobuki:
             if desc.find("USB Serial Port") != -1:
                 print("kobuki is connected in the Following Port")
                 print("{} {} [{}]".format(kport, desc, hwid))
-                print(kport[0:4])
-                Kobuki.seri = ser.Serial(port=kport[0:4], baudrate=115200)
+                Kobuki.seri = ser.Serial(port=kport, baudrate=115200, timeout=1.0)
                 return Kobuki.seri
             elif desc.find("Kobuki") != -1:
                 # print(kport,desc)
                 print("kobuki is connected in the Following Port")
                 print("{} {} [{}]".format(kport, desc, hwid))
                 # print(kport)
-                Kobuki.seri = ser.Serial(port=kport, baudrate=115200)
+                Kobuki.seri = ser.Serial(port=kport, baudrate=115200, timeout=1.0)
                 return Kobuki.seri
         else:
             raise Exception("Kobuki is not connected")
@@ -217,20 +216,30 @@ class Kobuki:
 
     def read_data():
         while 1:
-            if int.from_bytes(Kobuki.seri.read(2), byteorder="little") == 333:
-                __temp = Kobuki.seri.read(200)
-                __in_buff = [x for x in __temp]
+            try:
+                header = Kobuki.seri.read(2)
+                if len(header) < 2:
+                    t.sleep(0.01)
+                    continue
+                if int.from_bytes(header, byteorder="little") == 333:
+                    __temp = Kobuki.seri.read(200)
+                    if len(__temp) < 44:
+                        continue
+                    __in_buff = [x for x in __temp]
 
-                for data in range(0, len(__in_buff) - 1):
-                    if __in_buff[data] == 170 and __in_buff[data + 1] == 85:
-                        Kobuki.__general_purpose_input = __in_buff[data - 19 :]
+                    for data in range(0, len(__in_buff) - 1):
+                        if __in_buff[data] == 170 and __in_buff[data + 1] == 85:
+                            Kobuki.__general_purpose_input = __in_buff[data - 19 :]
 
-                Kobuki.__basic_sensor = __in_buff[1:16]
-                Kobuki.__docking_IR = __in_buff[15:21]
-                Kobuki.__inertial_sensor = __in_buff[21:30]
-                Kobuki.__cliffsensor = __in_buff[30:38]
-                Kobuki.__current = __in_buff[38:42]
-                Kobuki.__gyro = __in_buff[42 : 44 + __in_buff[43]]
+                    Kobuki.__basic_sensor = __in_buff[1:16]
+                    Kobuki.__docking_IR = __in_buff[15:21]
+                    Kobuki.__inertial_sensor = __in_buff[21:30]
+                    Kobuki.__cliffsensor = __in_buff[30:38]
+                    Kobuki.__current = __in_buff[38:42]
+                    if len(__in_buff) >= 44 and len(__in_buff) >= 44 + __in_buff[43]:
+                        Kobuki.__gyro = __in_buff[42 : 44 + __in_buff[43]]
+            except Exception:
+                t.sleep(0.05)
 
     def basic_sensor_data(self):
         sensor = {}
