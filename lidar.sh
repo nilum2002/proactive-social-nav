@@ -13,7 +13,7 @@ export PYTHONPATH="$PYTHONPATH:$VENV_SITE_PACKAGES"
 
 cd "$REPO_ROOT/ros2_ws"
 sudo chmod 666 /dev/ttyUSB0
-colcon build 
+colcon build --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 
 source install/setup.bash
 
 ros2 launch ldlidar_stl_ros2 ld19.launch.py
