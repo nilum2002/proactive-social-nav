@@ -1,0 +1,9 @@
+[0.121s] Invoking command in '/home/nilum/proactive-social-nav/build/proactive_nav_msgs': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/home/nilum/proactive-social-nav/ros2_ws/install/lidar_grpc_client:/home/nilum/proactive-social-nav/ros2_ws/install/lidar_grpc_bridge:/home/nilum/proactive-social-nav/ros2_ws/install/dr_spaam_ros2:/home/nilum/proactive-social-nav/ros2_ws/install/botzilla_control:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/nilum/proactive-social-nav/proactive_nav_msgs -DPython3_EXECUTABLE=/usr/bin/python3 -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/nilum/proactive-social-nav/install/proactive_nav_msgs
+[1.740s] -- The C compiler identification is GNU 13.3.0
+[1.742s] -- The CXX compiler identification is GNU 13.3.0
+[1.742s] -- Detecting C compiler ABI info
+[1.742s] -- Detecting C compiler ABI info - done
+[1.743s] -- Check for working C compiler: /usr/bin/cc - skipped
+[1.743s] -- Detecting C compile features
+[1.744s] -- Detecting C compile features - done
+[1.744s] -- Detecting CXX compiler ABI info
