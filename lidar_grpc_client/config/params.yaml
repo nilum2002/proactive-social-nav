@@ -20,3 +20,20 @@ grpc_scan_client_node:
     enable_track_push: true
     track_array_topic: "/dr_spaam_tracker_node/track_array"
 
+    # Odometry: pull the robot's odom->base_link pose on a third call to the same
+    # server/port (OdometryService/StreamOdometry), republished here as /odom + tf,
+    # exactly matching what kobuki_base_node publishes locally on the robot.
+    #
+    # IMPORTANT: if this machine and the robot ALSO see each other over native ROS2
+    # DDS (same ROS_DOMAIN_ID, multicast not blocked), kobuki_base_node's own tf
+    # broadcast can arrive here too — two publishers of the same odom->base_link
+    # frame, stamped independently, is exactly what produces TF_OLD_DATA spam in
+    # RViz (the tf tree doesn't namespace by topic, so renaming odom_topic does not
+    # avoid this). Set ROS_LOCALHOST_ONLY=1 on both machines so the gRPC link here is
+    # the only path between them, same as the scan_topic note above.
+    enable_odom: true
+    odom_topic: "/odom"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+    publish_odom_tf: true
+

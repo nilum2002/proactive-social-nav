@@ -13,3 +13,11 @@ lidar_grpc_server_node:
     track_poses_topic: "~/track_poses"
     track_frame_id: ""              # "" = keep whatever frame_id the pusher sent
     use_source_track_timestamp: true
+
+    # Odometry: streams kobuki_base_node's odom->base_link pose to the consumer over
+    # OdometryService/StreamOdometry, so RViz/tf2 there don't depend on native ROS2
+    # DDS discovery reaching across the network (same reasoning as the scan itself
+    # going over gRPC). Requires kobuki_base_node (or something else publishing
+    # nav_msgs/Odometry on odom_topic) to be running on this machine.
+    enable_odom: true
+    odom_topic: "/odom"

@@ -21,6 +21,14 @@ independent reconnect loops (two TCP connections to one target) rather than shar
 one channel object, so a stall pulling scans cannot block pushing tracks or vice versa,
 and neither reconnect loop needs to coordinate with the other.
 
+Odometry: this node also PULLS the robot's odom->base_link pose over
+OdometryService.StreamOdometry — a third call to the same server/port — and
+republishes it as nav_msgs/Odometry plus a tf broadcast, exactly matching what
+kobuki_base_node publishes locally on the robot. This exists so the pose reaches
+RViz/tf2 on this machine over the same gRPC link as the scan, instead of depending on
+native ROS2 DDS discovery to carry /tf across the network — the whole reason the scan
+itself goes over gRPC rather than a plain ROS2 topic.
+
 Threading: the blocking gRPC receive loop owns a daemon thread; rclpy.spin() keeps the
 main thread. rclpy publishers are thread-safe, so the receive thread publishes directly.
 """
@@ -34,6 +42,9 @@ import grpc
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
 
 from proactive_nav_msgs.msg import TrackArray as TrackArrayMsg
 
@@ -47,6 +58,8 @@ import lidar_stream_pb2          # noqa: E402
 import lidar_stream_pb2_grpc     # noqa: E402
 import track_stream_pb2          # noqa: E402
 import track_stream_pb2_grpc     # noqa: E402
+import odom_stream_pb2           # noqa: E402
+import odom_stream_pb2_grpc      # noqa: E402
 
 
 class GrpcScanClientNode(Node):
@@ -75,6 +88,17 @@ class GrpcScanClientNode(Node):
         self.declare_parameter("enable_track_push", True)
         self.declare_parameter("track_array_topic", "/dr_spaam_tracker_node/track_array")
 
+        # Odometry: pulled over gRPC on a third call to the same server/port, instead
+        # of relying on native ROS2 DDS discovery to carry kobuki_base_node's /tf
+        # across the network. Republished here exactly as kobuki_base_node publishes
+        # it locally, so dr_spaam_tracker_node's odom-frame lookup_transform() and
+        # RViz see the same odom->base_link transform either way.
+        self.declare_parameter("enable_odom", True)
+        self.declare_parameter("odom_topic", "/odom")
+        self.declare_parameter("odom_frame_id", "odom")
+        self.declare_parameter("base_frame_id", "base_link")
+        self.declare_parameter("publish_odom_tf", True)
+
         self.server_address = self.get_parameter("server_address").get_parameter_value().string_value
         self.server_port = self.get_parameter("server_port").get_parameter_value().integer_value
         self.scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
@@ -85,6 +109,11 @@ class GrpcScanClientNode(Node):
         self.use_source_timestamp = self.get_parameter("use_source_timestamp").get_parameter_value().bool_value
         self.enable_track_push = self.get_parameter("enable_track_push").get_parameter_value().bool_value
         self.track_array_topic = self.get_parameter("track_array_topic").get_parameter_value().string_value
+        self.enable_odom = self.get_parameter("enable_odom").get_parameter_value().bool_value
+        self.odom_topic = self.get_parameter("odom_topic").get_parameter_value().string_value
+        self.odom_frame_id = self.get_parameter("odom_frame_id").get_parameter_value().string_value
+        self.base_frame_id = self.get_parameter("base_frame_id").get_parameter_value().string_value
+        self.publish_odom_tf = self.get_parameter("publish_odom_tf").get_parameter_value().bool_value
 
         # Default (RELIABLE) QoS, deliberately NOT qos_profile_sensor_data:
         # dr_spaam_ros2_node subscribes with plain depth-10 default QoS, i.e. RELIABLE.
@@ -105,6 +134,22 @@ class GrpcScanClientNode(Node):
         self._rx_thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._rx_thread.start()
 
+        odom_status_line = "disabled (enable_odom:=false)"
+        if self.enable_odom:
+            self._odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
+            if self.publish_odom_tf:
+                self._tf_broadcaster = TransformBroadcaster(self)
+            self._odom_count = 0
+            self._odom_since_log = 0
+            self._odom_connected = False
+            self._odom_stop = threading.Event()
+            self._odom_rx_thread = threading.Thread(target=self._odom_receive_loop, daemon=True)
+            self._odom_rx_thread.start()
+            odom_status_line = (
+                f"OdometryService/StreamOdometry -> {self.odom_topic}"
+                + (f" + tf({self.odom_frame_id}->{self.base_frame_id})" if self.publish_odom_tf else "")
+            )
+
         push_status_line = "disabled (enable_track_push:=false)"
         if self.enable_track_push:
             self._track_queue = queue.Queue(maxsize=1)
@@ -124,6 +169,7 @@ class GrpcScanClientNode(Node):
             f"  Pulling from  : {self._target}  (LidarService/StreamScan)\n"
             f"  Republishing  : {self.scan_topic}  (frame '{self.frame_id}')\n"
             f"  Timestamps    : {'source (robot clock)' if self.use_source_timestamp else 'local arrival time'}\n"
+            f"  Odometry      : {odom_status_line}\n"
             f"  Pushing tracks: {push_status_line}\n"
             f"  Set 'server_address' to the host running lidar_grpc_bridge."
         )
@@ -199,9 +245,91 @@ class GrpcScanClientNode(Node):
         rate = self._scans_since_log / self.status_log_period_s
         self._scans_since_log = 0
         state = "connected" if self._connected else "disconnected"
-        self.get_logger().info(
-            f"[gRPC client] {state} | {rate:.1f} scans/s out | {self._scan_count} total"
-        )
+        line = f"[gRPC client] {state} | {rate:.1f} scans/s out | {self._scan_count} total"
+        if self.enable_odom:
+            odom_rate = self._odom_since_log / self.status_log_period_s
+            self._odom_since_log = 0
+            odom_state = "connected" if self._odom_connected else "disconnected"
+            line += f"   ||   odom {odom_state} | {odom_rate:.1f} odom/s in | {self._odom_count} total"
+        self.get_logger().info(line)
+
+    # ── Odometry: pulled over gRPC, republished as /odom + tf(odom->base_link) ──────
+    # Mirrors what kobuki_base_node publishes locally on the robot (see
+    # botzilla_control/kobuki_base_node.py) so dr_spaam_tracker_node's
+    # lookup_transform(target_frame="odom", ...) and RViz see the same TF either way,
+    # without needing native ROS2 DDS discovery between the two machines.
+
+    def _odom_receive_loop(self):
+        """Blocking pull loop with reconnect, independent of the scan pull loop so a
+        stall on one stream cannot block the other. Runs on its own thread."""
+        while not self._odom_stop.is_set() and rclpy.ok():
+            channel = None
+            try:
+                channel = grpc.insecure_channel(self._target)
+                stub = odom_stream_pb2_grpc.OdometryServiceStub(channel)
+                self.get_logger().info(f"Connecting to {self._target} for odometry ...")
+
+                for odom_pb in stub.StreamOdometry(odom_stream_pb2.StreamRequest()):
+                    if self._odom_stop.is_set() or not rclpy.ok():
+                        break
+                    if not self._odom_connected:
+                        self._odom_connected = True
+                        self.get_logger().info(f"Connected — receiving odometry from {self._target}")
+                    self._publish_odom(odom_pb)
+
+            except grpc.RpcError as e:
+                code = e.code() if hasattr(e, "code") else None
+                self.get_logger().warn(f"gRPC odom stream ended ({code}); retrying in {self.reconnect_delay_s}s")
+            except Exception as e:
+                self.get_logger().error(f"Unexpected error in odom receive loop: {e}")
+            finally:
+                self._odom_connected = False
+                if channel is not None:
+                    channel.close()
+
+            if self._odom_stop.is_set() or not rclpy.ok():
+                break
+            time.sleep(self.reconnect_delay_s)
+
+    def _publish_odom(self, odom_pb):
+        if self.use_source_timestamp and odom_pb.timestamp > 0.0:
+            sec = int(odom_pb.timestamp)
+            nanosec = int(round((odom_pb.timestamp - sec) * 1e9))
+            if nanosec >= 1_000_000_000:
+                sec += 1
+                nanosec -= 1_000_000_000
+            stamp_sec, stamp_nanosec = sec, nanosec
+        else:
+            now = self.get_clock().now().to_msg()
+            stamp_sec, stamp_nanosec = now.sec, now.nanosec
+
+        msg = Odometry()
+        msg.header.stamp.sec = stamp_sec
+        msg.header.stamp.nanosec = stamp_nanosec
+        msg.header.frame_id = self.odom_frame_id
+        msg.child_frame_id = self.base_frame_id
+        msg.pose.pose.position.x = odom_pb.x
+        msg.pose.pose.position.y = odom_pb.y
+        msg.pose.pose.orientation.z = odom_pb.qz
+        msg.pose.pose.orientation.w = odom_pb.qw
+        msg.twist.twist.linear.x = odom_pb.vx
+        msg.twist.twist.angular.z = odom_pb.vtheta
+        self._odom_pub.publish(msg)
+
+        if self.publish_odom_tf:
+            tf_msg = TransformStamped()
+            tf_msg.header.stamp.sec = stamp_sec
+            tf_msg.header.stamp.nanosec = stamp_nanosec
+            tf_msg.header.frame_id = self.odom_frame_id
+            tf_msg.child_frame_id = self.base_frame_id
+            tf_msg.transform.translation.x = odom_pb.x
+            tf_msg.transform.translation.y = odom_pb.y
+            tf_msg.transform.rotation.z = odom_pb.qz
+            tf_msg.transform.rotation.w = odom_pb.qw
+            self._tf_broadcaster.sendTransform(tf_msg)
+
+        self._odom_count += 1
+        self._odom_since_log += 1
 
     # ── Return path: push tracks up ──────────────────────────────────────────────
 
@@ -269,6 +397,10 @@ class GrpcScanClientNode(Node):
         self._stop.set()
         if self._rx_thread.is_alive():
             self._rx_thread.join(timeout=3.0)
+        if self.enable_odom:
+            self._odom_stop.set()
+            if self._odom_rx_thread.is_alive():
+                self._odom_rx_thread.join(timeout=3.0)
         if self.enable_track_push:
             self._push_stop.set()
             if self._tx_thread.is_alive():

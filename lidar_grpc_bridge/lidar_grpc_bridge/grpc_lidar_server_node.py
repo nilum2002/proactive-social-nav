@@ -27,6 +27,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Pose, PoseArray
+from nav_msgs.msg import Odometry
 
 from proactive_nav_msgs.msg import Track as TrackMsg, TrackArray as TrackArrayMsg
 
@@ -39,6 +40,8 @@ import lidar_stream_pb2          # noqa: E402
 import lidar_stream_pb2_grpc     # noqa: E402
 import track_stream_pb2          # noqa: E402
 import track_stream_pb2_grpc     # noqa: E402
+import odom_stream_pb2           # noqa: E402
+import odom_stream_pb2_grpc      # noqa: E402
 
 
 class LidarServicer(lidar_stream_pb2_grpc.LidarServiceServicer):
@@ -103,6 +106,65 @@ class LidarServicer(lidar_stream_pb2_grpc.LidarServiceServicer):
             self._logger.info(f"gRPC client disconnected: {peer} (now {self.client_count} client(s))")
 
 
+class OdometryServicer(odom_stream_pb2_grpc.OdometryServiceServicer):
+    """Fans the newest odom->base_link pose out to every currently connected client.
+
+    Same broadcast/latest-wins shape as LidarServicer: this exists so RViz/tf2 on the
+    laptop get the robot's pose over the same gRPC link as the scan, instead of
+    depending on native ROS2 DDS discovery reaching across the network.
+    """
+
+    def __init__(self, logger, poll_timeout_s=0.5):
+        self._logger = logger
+        self._poll_timeout_s = poll_timeout_s
+        self._client_queues = []
+        self._lock = threading.Lock()
+
+    @property
+    def client_count(self):
+        with self._lock:
+            return len(self._client_queues)
+
+    def broadcast(self, odom_pb):
+        with self._lock:
+            queues = list(self._client_queues)
+
+        for q in queues:
+            try:
+                q.put_nowait(odom_pb)
+            except queue.Full:
+                # Latest-wins, same reasoning as LidarServicer.broadcast: a stale pose
+                # is worse than a late-but-current one for TF/RViz.
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(odom_pb)
+                except queue.Full:
+                    pass
+
+    def StreamOdometry(self, request, context):
+        q = queue.Queue(maxsize=1)
+        with self._lock:
+            self._client_queues.append(q)
+        peer = context.peer()
+        self._logger.info(f"gRPC odom client connected: {peer} (now {self.client_count} client(s))")
+
+        try:
+            while context.is_active():
+                try:
+                    odom_pb = q.get(timeout=self._poll_timeout_s)
+                except queue.Empty:
+                    continue
+                yield odom_pb
+        finally:
+            with self._lock:
+                if q in self._client_queues:
+                    self._client_queues.remove(q)
+            self._logger.info(f"gRPC odom client disconnected: {peer} (now {self.client_count} client(s))")
+
+
 class TrackPushServicer(track_stream_pb2_grpc.TrackServiceServicer):
     """Return path: the laptop pushes tracked-person state up this same server.
 
@@ -146,6 +208,11 @@ class LidarGrpcServerNode(Node):
         self.declare_parameter("track_poses_topic", "~/track_poses")
         self.declare_parameter("track_frame_id", "")  # "" = keep what the pusher sent
         self.declare_parameter("use_source_track_timestamp", True)
+        # Odometry: streamed to the consumer over gRPC (OdometryService/StreamOdometry)
+        # instead of relying on native ROS2 DDS discovery to carry /tf across the
+        # network -- same reasoning as the scan going over gRPC instead of a topic.
+        self.declare_parameter("enable_odom", True)
+        self.declare_parameter("odom_topic", "/odom")
 
         self.scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
         self.bind_address = self.get_parameter("bind_address").get_parameter_value().string_value
@@ -157,16 +224,22 @@ class LidarGrpcServerNode(Node):
         self.track_poses_topic = self.get_parameter("track_poses_topic").get_parameter_value().string_value
         self.track_frame_id_override = self.get_parameter("track_frame_id").get_parameter_value().string_value
         self.use_source_track_timestamp = self.get_parameter("use_source_track_timestamp").get_parameter_value().bool_value
+        self.enable_odom = self.get_parameter("enable_odom").get_parameter_value().bool_value
+        self.odom_topic = self.get_parameter("odom_topic").get_parameter_value().string_value
 
         self._scan_count = 0
         self._scans_since_log = 0
         self._track_msg_count = 0
         self._track_msgs_since_log = 0
+        self._odom_count = 0
+        self._odom_since_log = 0
 
         self._servicer = LidarServicer(self.get_logger())
         self._track_servicer = TrackPushServicer(self.get_logger(), self._on_track_array)
         self._tracks_pub = self.create_publisher(TrackArrayMsg, self.tracks_topic, 10)
         self._track_poses_pub = self.create_publisher(PoseArray, self.track_poses_topic, 10)
+        if self.enable_odom:
+            self._odom_servicer = OdometryServicer(self.get_logger())
 
         # Each in-flight server-streaming call occupies one pool thread for its entire
         # lifetime, so the pool must be larger than the number of clients or the next
@@ -181,6 +254,8 @@ class LidarGrpcServerNode(Node):
         )
         lidar_stream_pb2_grpc.add_LidarServiceServicer_to_server(self._servicer, self._server)
         track_stream_pb2_grpc.add_TrackServiceServicer_to_server(self._track_servicer, self._server)
+        if self.enable_odom:
+            odom_stream_pb2_grpc.add_OdometryServiceServicer_to_server(self._odom_servicer, self._server)
 
         bind_target = f"{self.bind_address}:{self.port}"
         bound_port = self._server.add_insecure_port(bind_target)
@@ -194,17 +269,27 @@ class LidarGrpcServerNode(Node):
         self._scan_sub = self.create_subscription(
             LaserScan, self.scan_topic, self._scan_callback, qos_profile_sensor_data
         )
+        if self.enable_odom:
+            # Default (RELIABLE) QoS: matches nav_msgs/Odometry publishers such as
+            # kobuki_base_node, which uses the default depth-10 RELIABLE publisher.
+            self._odom_sub = self.create_subscription(
+                Odometry, self.odom_topic, self._odom_callback, 10
+            )
 
         if self.status_log_period_s > 0.0:
             self._status_timer = self.create_timer(self.status_log_period_s, self._log_status)
 
+        services_line = "LidarService/StreamScan, TrackService/PushTracks"
+        if self.enable_odom:
+            services_line += ", OdometryService/StreamOdometry"
         self.get_logger().info(
             f"\n"
             f"  ╔══════════════════════════════════════════╗\n"
             f"  ║        LiDAR → gRPC Stream Bridge        ║\n"
             f"  ╚══════════════════════════════════════════╝\n"
-            f"  Subscribed to : {self.scan_topic}\n"
-            f"  Serving on    : {bind_target}  (LidarService/StreamScan, TrackService/PushTracks)\n"
+            f"  Subscribed to : {self.scan_topic}"
+            + (f", {self.odom_topic}" if self.enable_odom else "") + "\n"
+            f"  Serving on    : {bind_target}  ({services_line})\n"
             f"  Max clients   : {self.max_clients}\n"
             f"  Max message   : {self.max_message_mb} MiB\n"
             f"  Republishing tracks pushed by the inference host to:\n"
@@ -230,6 +315,21 @@ class LidarGrpcServerNode(Node):
         self._servicer.broadcast(scan_pb)
         self._scan_count += 1
         self._scans_since_log += 1
+
+    def _odom_callback(self, msg: Odometry):
+        stamp = msg.header.stamp
+        odom_pb = odom_stream_pb2.OdometryData(
+            timestamp=stamp.sec + stamp.nanosec * 1e-9,
+            x=msg.pose.pose.position.x,
+            y=msg.pose.pose.position.y,
+            qz=msg.pose.pose.orientation.z,
+            qw=msg.pose.pose.orientation.w,
+            vx=msg.twist.twist.linear.x,
+            vtheta=msg.twist.twist.angular.z,
+        )
+        self._odom_servicer.broadcast(odom_pb)
+        self._odom_count += 1
+        self._odom_since_log += 1
 
     def _on_track_array(self, pb):
         """Called from a gRPC pool thread (inside PushTracks) for each incoming
@@ -282,11 +382,19 @@ class LidarGrpcServerNode(Node):
         self._scans_since_log = 0
         track_rate = self._track_msgs_since_log / self.status_log_period_s
         self._track_msgs_since_log = 0
-        self.get_logger().info(
+        line = (
             f"[gRPC] {self._servicer.client_count} scan client(s) | "
             f"{scan_rate:.1f} scans/s out | {self._scan_count} total   ||   "
             f"{track_rate:.1f} track msgs/s in | {self._track_msg_count} total"
         )
+        if self.enable_odom:
+            odom_rate = self._odom_since_log / self.status_log_period_s
+            self._odom_since_log = 0
+            line += (
+                f"   ||   {self._odom_servicer.client_count} odom client(s) | "
+                f"{odom_rate:.1f} odom/s out | {self._odom_count} total"
+            )
+        self.get_logger().info(line)
 
     def shutdown(self):
         self.get_logger().info("Stopping gRPC server...")

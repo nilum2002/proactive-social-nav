@@ -34,6 +34,9 @@ def generate_launch_description():
     )
 
     # ── 2. base_link → base_laser static TF ──────────────────────────────────
+    # The odom → base_link transform is published dynamically by kobuki_base_node
+    # running on the RPi (from encoder odometry). Only base_link → base_laser
+    # needs a static publisher here.
     tf_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',

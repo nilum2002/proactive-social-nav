@@ -13,6 +13,8 @@
 
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
   <depend>proactive_nav_msgs</depend>
   <!-- Provides proto/lidar_stream.proto and the generated stubs, reused rather than duplicated. -->
   <depend>lidar_grpc_bridge</depend>
