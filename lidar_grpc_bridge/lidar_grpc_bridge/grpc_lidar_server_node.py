@@ -19,11 +19,16 @@ import sys
 import threading
 from concurrent import futures
 
+import math
+
 import grpc
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Pose, PoseArray
+
+from proactive_nav_msgs.msg import Track as TrackMsg, TrackArray as TrackArrayMsg
 
 # The generated stubs use absolute imports (`import lidar_stream_pb2`) because that is
 # what protoc emits, and jetson_grpc_client.py imports them the same way. Rather than
@@ -32,6 +37,8 @@ from sensor_msgs.msg import LaserScan
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lidar_stream_pb2          # noqa: E402
 import lidar_stream_pb2_grpc     # noqa: E402
+import track_stream_pb2          # noqa: E402
+import track_stream_pb2_grpc     # noqa: E402
 
 
 class LidarServicer(lidar_stream_pb2_grpc.LidarServiceServicer):
@@ -96,6 +103,33 @@ class LidarServicer(lidar_stream_pb2_grpc.LidarServiceServicer):
             self._logger.info(f"gRPC client disconnected: {peer} (now {self.client_count} client(s))")
 
 
+class TrackPushServicer(track_stream_pb2_grpc.TrackServiceServicer):
+    """Return path: the laptop pushes tracked-person state up this same server.
+
+    Client-streaming rather than a second server on the laptop — the laptop is
+    already dialing this process to pull scans (LidarService.StreamScan), so it opens
+    a second call here instead of standing up its own gRPC server + port. Each
+    incoming TrackArray is handed to on_track_array(pb) as it arrives; the caller
+    (LidarGrpcServerNode) does the ROS republish so this class stays gRPC-only.
+    """
+
+    def __init__(self, logger, on_track_array):
+        self._logger = logger
+        self._on_track_array = on_track_array
+
+    def PushTracks(self, request_iterator, context):
+        peer = context.peer()
+        self._logger.info(f"track push connected: {peer}")
+        count = 0
+        try:
+            for track_array_pb in request_iterator:
+                self._on_track_array(track_array_pb)
+                count += len(track_array_pb.tracks)
+            return track_stream_pb2.PushAck(tracks_received=count)
+        finally:
+            self._logger.info(f"track push disconnected: {peer} ({count} track(s) total)")
+
+
 class LidarGrpcServerNode(Node):
 
     def __init__(self):
@@ -107,6 +141,11 @@ class LidarGrpcServerNode(Node):
         self.declare_parameter("max_clients", 4)
         self.declare_parameter("max_message_mb", 10)
         self.declare_parameter("status_log_period_s", 5.0)
+        # Return path: where pushed tracks get republished locally for the planner.
+        self.declare_parameter("tracks_topic", "~/tracks")
+        self.declare_parameter("track_poses_topic", "~/track_poses")
+        self.declare_parameter("track_frame_id", "")  # "" = keep what the pusher sent
+        self.declare_parameter("use_source_track_timestamp", True)
 
         self.scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
         self.bind_address = self.get_parameter("bind_address").get_parameter_value().string_value
@@ -114,11 +153,20 @@ class LidarGrpcServerNode(Node):
         self.max_clients = self.get_parameter("max_clients").get_parameter_value().integer_value
         self.max_message_mb = self.get_parameter("max_message_mb").get_parameter_value().integer_value
         self.status_log_period_s = self.get_parameter("status_log_period_s").get_parameter_value().double_value
+        self.tracks_topic = self.get_parameter("tracks_topic").get_parameter_value().string_value
+        self.track_poses_topic = self.get_parameter("track_poses_topic").get_parameter_value().string_value
+        self.track_frame_id_override = self.get_parameter("track_frame_id").get_parameter_value().string_value
+        self.use_source_track_timestamp = self.get_parameter("use_source_track_timestamp").get_parameter_value().bool_value
 
         self._scan_count = 0
         self._scans_since_log = 0
+        self._track_msg_count = 0
+        self._track_msgs_since_log = 0
 
         self._servicer = LidarServicer(self.get_logger())
+        self._track_servicer = TrackPushServicer(self.get_logger(), self._on_track_array)
+        self._tracks_pub = self.create_publisher(TrackArrayMsg, self.tracks_topic, 10)
+        self._track_poses_pub = self.create_publisher(PoseArray, self.track_poses_topic, 10)
 
         # Each in-flight server-streaming call occupies one pool thread for its entire
         # lifetime, so the pool must be larger than the number of clients or the next
@@ -132,6 +180,7 @@ class LidarGrpcServerNode(Node):
             ],
         )
         lidar_stream_pb2_grpc.add_LidarServiceServicer_to_server(self._servicer, self._server)
+        track_stream_pb2_grpc.add_TrackServiceServicer_to_server(self._track_servicer, self._server)
 
         bind_target = f"{self.bind_address}:{self.port}"
         bound_port = self._server.add_insecure_port(bind_target)
@@ -155,9 +204,12 @@ class LidarGrpcServerNode(Node):
             f"  ║        LiDAR → gRPC Stream Bridge        ║\n"
             f"  ╚══════════════════════════════════════════╝\n"
             f"  Subscribed to : {self.scan_topic}\n"
-            f"  Serving on    : {bind_target}  (LidarService/StreamScan)\n"
+            f"  Serving on    : {bind_target}  (LidarService/StreamScan, TrackService/PushTracks)\n"
             f"  Max clients   : {self.max_clients}\n"
             f"  Max message   : {self.max_message_mb} MiB\n"
+            f"  Republishing tracks pushed by the inference host to:\n"
+            f"    {self.tracks_topic}  (proactive_nav_msgs/TrackArray)\n"
+            f"    {self.track_poses_topic}  (geometry_msgs/PoseArray, heading in orientation)\n"
             f"  Consumers dial in and pull; e.g. set RPI_IP in jetson_grpc_client.py\n"
             f"  to this host's address."
         )
@@ -179,12 +231,54 @@ class LidarGrpcServerNode(Node):
         self._scan_count += 1
         self._scans_since_log += 1
 
+    def _on_track_array(self, pb):
+        """Called from a gRPC pool thread (inside PushTracks) for each incoming
+        TrackArray. rclpy publishers are thread-safe, so this publishes directly
+        rather than bouncing through a queue back to the executor thread."""
+        msg = TrackArrayMsg()
+        if self.use_source_track_timestamp and pb.timestamp > 0.0:
+            sec = int(pb.timestamp)
+            nanosec = int(round((pb.timestamp - sec) * 1e9))
+            if nanosec >= 1_000_000_000:
+                sec += 1
+                nanosec -= 1_000_000_000
+            msg.header.stamp.sec = sec
+            msg.header.stamp.nanosec = nanosec
+        else:
+            msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.track_frame_id_override or pb.frame_id
+
+        poses = PoseArray()
+        poses.header = msg.header
+
+        for t in pb.tracks:
+            tm = TrackMsg()
+            tm.id, tm.x, tm.y = t.id, t.x, t.y
+            tm.vx, tm.vy, tm.speed, tm.heading = t.vx, t.vy, t.speed, t.heading
+            tm.moving = t.moving
+            msg.tracks.append(tm)
+
+            p = Pose()
+            p.position.x, p.position.y = float(t.x), float(t.y)
+            half = float(t.heading) / 2.0
+            p.orientation.z = math.sin(half)
+            p.orientation.w = math.cos(half)
+            poses.poses.append(p)
+
+        self._tracks_pub.publish(msg)
+        self._track_poses_pub.publish(poses)
+        self._track_msg_count += 1
+        self._track_msgs_since_log += 1
+
     def _log_status(self):
-        rate = self._scans_since_log / self.status_log_period_s
+        scan_rate = self._scans_since_log / self.status_log_period_s
         self._scans_since_log = 0
+        track_rate = self._track_msgs_since_log / self.status_log_period_s
+        self._track_msgs_since_log = 0
         self.get_logger().info(
-            f"[gRPC] {self._servicer.client_count} client(s) | "
-            f"{rate:.1f} scans/s in | {self._scan_count} total"
+            f"[gRPC] {self._servicer.client_count} scan client(s) | "
+            f"{scan_rate:.1f} scans/s out | {self._scan_count} total   ||   "
+            f"{track_rate:.1f} track msgs/s in | {self._track_msg_count} total"
         )
 
     def shutdown(self):
