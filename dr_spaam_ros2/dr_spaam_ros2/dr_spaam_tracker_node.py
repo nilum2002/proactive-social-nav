@@ -5,8 +5,10 @@ from rclpy.duration import Duration
 from rclpy.time import Time
 from geometry_msgs.msg import Point, Pose, PoseArray, Vector3
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, Header
 from proactive_nav_msgs.msg import Track as TrackMsg, TrackArray
+import tf2_ros
+from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
 # Try importing scipy for Hungarian algorithm, fallback to greedy association if not present
 try:
@@ -246,6 +248,19 @@ class DrSpaamTrackerNode(Node):
         # Reference circle drawn around the lidar origin (visualization only)
         self.declare_parameter("lidar_radius_m", 1.0)
 
+        # World-fixed frame the Kalman filter actually tracks in. The constant-velocity
+        # model is only physically meaningful in a frame that doesn't itself move — if
+        # detections stayed in the sensor's own frame (e.g. "base_laser") once the robot
+        # is driving, a stationary person would appear to move (and a moving person's
+        # velocity would be wrong) purely from the robot's own motion. Detections are
+        # transformed into this frame before they ever reach the KF; nothing about the
+        # filter/association math changes. Requires odom->base_link (or whatever the
+        # incoming scan's frame_id is) to actually be on the TF tree.
+        self.declare_parameter("target_frame", "odom")
+        # How long to wait for the transform to become available before giving up on a
+        # given detections message. Kept short: at 10Hz a scan is stale well before 0.2s.
+        self.declare_parameter("tf_timeout_s", 0.2)
+
         # Extract values
         self.dets_topic = self.get_parameter("detections_topic").get_parameter_value().string_value
         self.tracks_topic = self.get_parameter("tracks_topic").get_parameter_value().string_value
@@ -263,6 +278,15 @@ class DrSpaamTrackerNode(Node):
         self.static_speed_thresh = self.get_parameter("static_speed_threshold").get_parameter_value().double_value
         self.static_frames_req = self.get_parameter("static_frames_required").get_parameter_value().integer_value
         self.lidar_radius_m = self.get_parameter("lidar_radius_m").get_parameter_value().double_value
+        self.target_frame = self.get_parameter("target_frame").get_parameter_value().string_value
+        self.tf_timeout_s = self.get_parameter("tf_timeout_s").get_parameter_value().double_value
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        # Throttle the "TF not ready" warning: at startup this is expected for the first
+        # second or so (odom->base_link hasn't been broadcast yet), not worth logging once
+        # per scan.
+        self._last_tf_warn_time = None
 
         # ── State Initialization ─────────────────────────────────────────────
         self.tracks = []
@@ -297,6 +321,40 @@ class DrSpaamTrackerNode(Node):
             f"  Hungarian Solver : {'Scipy Hungarian' if HAS_SCIPY else 'Greedy Matching'}"
         )
 
+    def _lookup_world_transform(self, source_frame, stamp):
+        """Return (tx, ty, yaw) for source_frame -> self.target_frame at stamp, or None
+        if the transform isn't available yet (logged, throttled — not an error at
+        startup before the first odom->base_link broadcast has arrived)."""
+        if source_frame == self.target_frame:
+            return (0.0, 0.0, 0.0)   # already in the target frame, nothing to do
+
+        try:
+            t = self.tf_buffer.lookup_transform(
+                self.target_frame, source_frame, stamp,
+                timeout=Duration(seconds=self.tf_timeout_s),
+            )
+        except (LookupException, ConnectivityException, ExtrapolationException) as e:
+            now = self.get_clock().now()
+            if self._last_tf_warn_time is None or (now - self._last_tf_warn_time).nanoseconds > 2e9:
+                self._last_tf_warn_time = now
+                self.get_logger().warn(
+                    f"[TRACKER] No transform {source_frame} -> {self.target_frame} yet "
+                    f"({e}); dropping this scan's detections until it's available."
+                )
+            return None
+
+        tx = t.transform.translation.x
+        ty = t.transform.translation.y
+        qz = t.transform.rotation.z
+        qw = t.transform.rotation.w
+        yaw = 2.0 * np.arctan2(qz, qw)   # planar transform: qx=qy=0 for a 2D robot
+        return (tx, ty, yaw)
+
+    @staticmethod
+    def _apply_planar_transform(x, y, tx, ty, yaw):
+        cos_t, sin_t = np.cos(yaw), np.sin(yaw)
+        return (tx + x * cos_t - y * sin_t, ty + x * sin_t + y * cos_t)
+
     def _dets_callback(self, msg: PoseArray):
         try:
             self._process_detections(msg)
@@ -328,10 +386,18 @@ class DrSpaamTrackerNode(Node):
         if dt <= 0.0 or dt > 2.0:
             dt = 0.1
 
-        # 2. Extract detection coordinates
+        # 2. Extract detection coordinates and transform into the world-fixed tracking
+        # frame. Everything from here on (association, KF predict/update, publishing)
+        # operates in self.target_frame, not the sensor's own frame.
+        world_tf = self._lookup_world_transform(msg.header.frame_id, stamp)
+        if world_tf is None:
+            return
+        tx, ty, yaw = world_tf
+
         detections = []
         for pose in msg.poses:
-            detections.append((pose.position.x, pose.position.y))
+            wx, wy = self._apply_planar_transform(pose.position.x, pose.position.y, tx, ty, yaw)
+            detections.append((wx, wy))
 
         # 3. Kalman Filter PREDICT step for all active tracks
         for track in self.tracks:
@@ -431,10 +497,17 @@ class DrSpaamTrackerNode(Node):
         self.tracks = active_tracks
 
         # 6. PUBLISH TRACKED POSES (only moving, active tracks)
+        # Same timestamp as the source scan, but frame_id is now self.target_frame —
+        # everything published from here on is in world-fixed coordinates, not the
+        # sensor's own frame (see the transform applied above in step 2). Built as a new
+        # Header rather than mutating msg.header in place, which would silently change
+        # the frame_id on the incoming message object itself.
+        world_header = Header(stamp=msg.header.stamp, frame_id=self.target_frame)
+
         tracks_msg = PoseArray()
-        tracks_msg.header = msg.header
+        tracks_msg.header = world_header
         track_array = TrackArray()
-        track_array.header = msg.header
+        track_array.header = world_header
         for track in self.tracks:
             if track.state == "ACTIVE":
                 p = Pose()
@@ -460,9 +533,12 @@ class DrSpaamTrackerNode(Node):
         self.track_array_pub.publish(track_array)
 
         # 7. PUBLISH RVIZ MARKERS
-        self._publish_rviz_markers(msg.header)
+        # (tx, ty) is the robot's own position in target_frame — reusing the transform
+        # already looked up above rather than doing a second TF lookup for the same
+        # instant.
+        self._publish_rviz_markers(world_header, robot_x=tx, robot_y=ty)
 
-    def _publish_rviz_markers(self, header):
+    def _publish_rviz_markers(self, header, robot_x, robot_y):
         marker_array = MarkerArray()
 
         # Clear old markers
@@ -474,7 +550,11 @@ class DrSpaamTrackerNode(Node):
         marker_array = MarkerArray()
         lifetime = Duration(seconds=0.5).to_msg()
 
-        # ── 0. Reference circle around the lidar origin ──────────────────────
+        # ── 0. Reference circle around the lidar (i.e. the robot) ────────────
+        # Centered at the robot's live position, not the origin — correct when this
+        # was published in the sensor's own frame (origin = the lidar), but header is
+        # now target_frame (e.g. "odom"), where the origin is just wherever the robot
+        # happened to start, not where the robot is now.
         circle = Marker()
         circle.header = header
         circle.ns = "lidar_range_circle"
@@ -486,8 +566,8 @@ class DrSpaamTrackerNode(Node):
         num_segments = 36
         circle.points = [
             Point(
-                x=self.lidar_radius_m * np.cos(theta),
-                y=self.lidar_radius_m * np.sin(theta),
+                x=robot_x + self.lidar_radius_m * np.cos(theta),
+                y=robot_y + self.lidar_radius_m * np.sin(theta),
                 z=0.02,
             )
             for theta in np.linspace(0, 2 * np.pi, num_segments + 1)  # +1 closes the loop
