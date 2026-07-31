@@ -23,6 +23,14 @@ class DrSpaamROS2(Node):
         self.declare_parameter("panoramic_scan", True)
         self.declare_parameter("scan_topic", "/scan")
         self.declare_parameter("gpu", True)
+        # Crop the scan to this many degrees, centered on 0° (forward).
+        # Set to 360 to use the full scan. Set to 270 to remove the rear 90°,
+        # which is where the robot's own body sits and is a steady source of
+        # false positives if fed to the detector.
+        self.declare_parameter("scan_fov_deg", 270.0)
+        # Cap detections beyond this distance (metres). Overrides the sensor's hardware max.
+        # Set to -1.0 to use the sensor's native range_max.
+        self.declare_parameter("max_range", -1.0)
 
         # Get parameters
         self.weight_file = self.get_parameter("weight_file").get_parameter_value().string_value
@@ -32,6 +40,10 @@ class DrSpaamROS2(Node):
         self.panoramic_scan = self.get_parameter("panoramic_scan").get_parameter_value().bool_value
         self.scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
         self.use_gpu = self.get_parameter("gpu").get_parameter_value().bool_value
+        self.scan_fov_deg = self.get_parameter("scan_fov_deg").get_parameter_value().double_value
+        self.max_range = self.get_parameter("max_range").get_parameter_value().double_value
+        # Half-angle in radians defining the keep window: [-half_fov, +half_fov]
+        self._half_fov_rad = np.deg2rad(self.scan_fov_deg / 2.0)
 
         self.get_logger().info(f"Initializing detector '{self.detector_model}' with checkpoint: '{self.weight_file}'")
 
@@ -63,24 +75,52 @@ class DrSpaamROS2(Node):
         self.get_logger().info(f"Node initialized. Subscribed to topic: {self.scan_topic}")
 
     def _scan_callback(self, msg):
-        # Configure FOV on the first received scan message
-        if not self._detector.is_ready():
-            fov_rad = msg.angle_increment * len(msg.ranges)
-            self._detector.set_laser_fov(np.rad2deg(fov_rad))
-            self.get_logger().info(f"Dynamic LiDAR FOV configured to: {np.rad2deg(fov_rad):.2f} degrees")
+        # ── Build raw scan and per-ray angle arrays ───────────────────────────
+        raw_ranges = np.array(msg.ranges, dtype=np.float32)
+        scan_phi = msg.angle_min + np.arange(len(raw_ranges)) * msg.angle_increment
 
-        scan = np.array(msg.ranges)
-        # Preprocess scan: replace out-of-range points with maximum background range
+        # ── Normalize angles to [-π, π] for symmetric FOV cropping ───────────
+        scan_phi_norm = (scan_phi + np.pi) % (2 * np.pi) - np.pi
+
+        # ── Apply FOV crop: keep only rays within ±half_fov of forward (0°) ──
+        keep_mask = np.abs(scan_phi_norm) <= self._half_fov_rad
+        scan_phi_cropped = scan_phi_norm[keep_mask]
+        raw_ranges_cropped = raw_ranges[keep_mask]
+
+        # Re-order by angle. The scan sweeps 0..2pi, so after normalizing to [-pi, pi]
+        # the array runs 0..+180 then wraps to -180..0 — it is not monotonic. The mask
+        # therefore keeps a block at the START (0..+135) and another at the END
+        # (-135..0), leaving the kept array discontinuous across its middle and making
+        # (last - first) about zero rather than the true 270 span. Unsorted, that fed
+        # DR-SPAAM a scan that jumps +135 -> -135 mid-array and configured the detector
+        # with a 0 degree FOV. Sorting restores a single contiguous -135..+135 sweep.
+        order = np.argsort(scan_phi_cropped)
+        scan_phi_cropped = scan_phi_cropped[order]
+        raw_ranges_cropped = raw_ranges_cropped[order]
+
+        # ── Configure detector FOV on first call (use cropped FOV) ───────────
+        if not self._detector.is_ready():
+            cropped_fov_deg = (
+                np.rad2deg(scan_phi_cropped[-1] - scan_phi_cropped[0])
+                if len(scan_phi_cropped) > 1 else self.scan_fov_deg
+            )
+            self._detector.set_laser_fov(cropped_fov_deg)
+            self.get_logger().info(
+                f"FOV crop applied: full={np.rad2deg(msg.angle_increment * len(raw_ranges)):.1f}° "
+                f"→ cropped={cropped_fov_deg:.1f}° "
+                f"({len(raw_ranges_cropped)}/{len(raw_ranges)} rays kept)"
+            )
+
+        # ── Replace invalid ranges with background ────────────────────────────
+        effective_max = self.max_range if self.max_range > 0.0 else msg.range_max
+        scan = raw_ranges_cropped.copy()
         scan[scan < msg.range_min] = 29.99
-        scan[scan > msg.range_max] = 29.99
+        scan[scan > effective_max] = 29.99
         scan[np.isinf(scan)] = 29.99
         scan[np.isnan(scan)] = 29.99
 
-        # Compute exact angles for each ray based on LaserScan metadata
-        scan_phi = msg.angle_min + np.arange(len(msg.ranges)) * msg.angle_increment
-
-        # Run inference using the true scan angles
-        dets_xy, dets_cls, _ = self._detector(scan, scan_phi=scan_phi)
+        # ── Run DR-SPAAM inference on the cropped scan ────────────────────────
+        dets_xy, dets_cls, _ = self._detector(scan, scan_phi=scan_phi_cropped)
 
         # Apply confidence threshold filter
         conf_mask = (dets_cls >= self.conf_thresh).reshape(-1)

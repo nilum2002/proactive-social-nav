@@ -6,3 +6,10 @@ lidar_grpc_server_node:
     max_clients: 4            # thread pool is sized to this + 2
     max_message_mb: 10
     status_log_period_s: 5.0  # 0.0 disables the periodic rate/client log
+
+    # Return path: tracks pushed up by the inference host (TrackService/PushTracks)
+    # are republished here, on this same server process/port.
+    tracks_topic: "~/tracks"
+    track_poses_topic: "~/track_poses"
+    track_frame_id: ""              # "" = keep whatever frame_id the pusher sent
+    use_source_track_timestamp: true

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>lidar_grpc_client</name>
+  <version>0.1.0</version>
+  <description>
+    Receiving half of the gRPC lidar link. Pulls LaserScanData from lidar_grpc_bridge
+    running on the robot and republishes it as sensor_msgs/LaserScan locally, so the
+    existing DR-SPAAM detector and tracker nodes run unmodified.
+  </description>
+  <maintainer email="didulahirupama28@gmail.com">nilum2002</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>proactive_nav_msgs</depend>
+  <!-- Provides proto/lidar_stream.proto and the generated stubs, reused rather than duplicated. -->
+  <depend>lidar_grpc_bridge</depend>
+  <exec_depend>python3-grpcio</exec_depend>
+  <exec_depend>python3-protobuf</exec_depend>
+  <!-- Only needed for the combined detect+track launch file. -->
+  <exec_depend>dr_spaam_ros2</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

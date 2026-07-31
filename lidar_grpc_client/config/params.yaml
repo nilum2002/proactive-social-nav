@@ -1,0 +1,22 @@
+grpc_scan_client_node:
+  ros__parameters:
+    # Address of the machine running lidar_grpc_bridge (the one with the lidar).
+    server_address: "192.168.0.200"
+    server_port: 50051
+    # Deliberately NOT /scan. If a local lidar driver is also running, or the bridge
+    # host shares a DDS domain with this machine, /scan ends up with two publishers
+    # whose stamps interleave — the tracker then sees stamps jumping backwards by
+    # 0.1-0.5 s and drops most messages. Keeping the remote stream on its own topic
+    # makes the source unambiguous.
+    scan_topic: "/scan_remote"
+    frame_id: "base_laser"      # must match this machine's TF for the lidar
+    reconnect_delay_s: 2.0
+    max_message_mb: 10
+    status_log_period_s: 5.0
+    use_source_timestamp: true  # keep robot clock stamps so tracker dt stays jitter-free
+
+    # Return path: push dr_spaam_tracker_node's output up to the robot on a second
+    # call to the same server/port used to pull scans (TrackService/PushTracks).
+    enable_track_push: true
+    track_array_topic: "/dr_spaam_tracker_node/track_array"
+
