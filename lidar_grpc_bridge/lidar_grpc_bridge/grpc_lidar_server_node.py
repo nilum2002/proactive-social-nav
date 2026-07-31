@@ -258,6 +258,13 @@ class LidarGrpcServerNode(Node):
             tm.moving = t.moving
             msg.tracks.append(tm)
 
+            self.get_logger().info(
+                f"track {t.id}: pos=({t.x:+.2f}, {t.y:+.2f}) m  "
+                f"vel=({t.vx:+.2f}, {t.vy:+.2f}) m/s  "
+                f"dir={math.degrees(t.heading):+.1f}°  "
+                f"{'moving' if t.moving else 'stationary'}"
+            )
+
             p = Pose()
             p.position.x, p.position.y = float(t.x), float(t.y)
             half = float(t.heading) / 2.0
