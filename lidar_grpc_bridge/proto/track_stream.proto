@@ -1,0 +1,40 @@
+// Return path: tracked-person state travelling from the inference host back to the
+// robot. Deliberately client-streaming rather than a second server: the laptop is
+// ALREADY a LidarService client dialing the robot on this same port (see
+// lidar_stream.proto). Rather than standing up a second gRPC server on the laptop and
+// a second client on the robot, this adds one more RPC to the SAME server the robot
+// already runs, and the laptop's existing client process opens a second call on it to
+// push tracks up. One port, one server process per machine, in each direction.
+//
+// Regenerate with (venv active, from the package root):
+//   python -m grpc_tools.protoc -I proto --python_out=lidar_grpc_bridge \
+//       --grpc_python_out=lidar_grpc_bridge proto/track_stream.proto
+
+syntax = "proto3";
+
+package track;
+
+message Track {
+  int32 id = 1;        // stable across frames
+  float x = 2;         // m
+  float y = 3;         // m
+  float vx = 4;        // m/s
+  float vy = 5;        // m/s
+  float speed = 6;     // m/s
+  float heading = 7;   // rad, atan2(vy, vx); meaningless when speed ~ 0
+  bool moving = 8;      // tracker's own stationary/moving judgement
+}
+
+message TrackArray {
+  double timestamp = 1;   // seconds, from the source scan
+  string frame_id = 2;    // frame the coordinates are expressed in
+  repeated Track tracks = 3;
+}
+
+message PushAck {
+  int32 tracks_received = 1;
+}
+
+service TrackService {
+  rpc PushTracks(stream TrackArray) returns (PushAck);
+}
