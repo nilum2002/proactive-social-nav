@@ -1,24 +1,28 @@
 dr_spaam_ros2_node:
   ros__parameters:
-    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
     detector_model: "DR-SPAAM"
     conf_thresh: 0.9
     stride: 1
     panoramic_scan: true
-    scan_topic: "/scan_remote"   # set back to /scan when running against a local lidar
+    scan_topic: "/scan"
     gpu: true
     scan_fov_deg: 270.0       # Crop scan to 270° (removes rear 90° where robot body is)
-    max_range: 6.0            # Max detection distance in metres (-1.0 = use sensor range_max)
+    max_range: 12.0           # Max detection distance in metres (-1.0 = use sensor hardware max of 12 m)
+
 
 dr_spaam_ros2_node_debug:
   ros__parameters:
-    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/forg_dataset/dr_spaam_5_on_frog.pth"
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
     detector_model: "DR-SPAAM"
     conf_thresh: 0.4
     stride: 1
     panoramic_scan: true
     scan_topic: "/scan"
-    gpu: false
+    gpu: true
+    use_sim_time: false
+    log_every_n_scans: 10
+    raw_score_floor: 0.05
 
 dr_spaam_tracker_node:
   ros__parameters:
@@ -27,14 +31,14 @@ dr_spaam_tracker_node:
     markers_topic: "~/markers"
     association_threshold: 1.0
     max_lost_frames: 10
-    std_a_x: 0.8
-    std_a_y: 0.8
+    std_a_x: 1.0               # Process acceleration noise X (m/s^2) — MUST be > 0
+    std_a_y: 1.0                 # Process acceleration noise Y (m/s^2) — MUST be > 0
     r_laser: 0.20
-    prediction_horizon: 1.0
-    confirm_frames: 5
+    prediction_horizon: 2.0
+    confirm_frames: 8  # Consecutive matches before a track is confirmed ACTIVE (lower = faster, less certain)
 
     # Static object filter — removes false positives from walls/glass/furniture
-    static_speed_threshold: 0.05
-    static_frames_required: 4
+    static_speed_threshold:  0.05  # Speed below this (m/s) is considered static
+    static_frames_required: 8    # Must be static for this many consecutive frames
 
     lidar_radius_m: 1.0  # Radius (m) of the reference circle drawn around the lidar in RViz

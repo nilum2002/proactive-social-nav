@@ -12,10 +12,20 @@ exactly how jetson_grpc_client.py ended up missing the NaN guard that the ROS no
 has. With the scan back on a topic, the whole existing pipeline (detector, tracker,
 RViz markers) runs unmodified.
 
+Return path: this node also PUSHES tracked-person state (position, velocity, heading)
+back up to the same robot it pulls scans from, over TrackService.PushTracks — a second
+call to the same server/port rather than a separate gRPC server+client pair. It
+subscribes to dr_spaam_tracker_node's TrackArray output (which runs on this same
+machine) and streams it up. The two directions run as independent threads with
+independent reconnect loops (two TCP connections to one target) rather than sharing
+one channel object, so a stall pulling scans cannot block pushing tracks or vice versa,
+and neither reconnect loop needs to coordinate with the other.
+
 Threading: the blocking gRPC receive loop owns a daemon thread; rclpy.spin() keeps the
 main thread. rclpy publishers are thread-safe, so the receive thread publishes directly.
 """
 import os
+import queue
 import sys
 import threading
 import time
@@ -25,6 +35,8 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 
+from proactive_nav_msgs.msg import TrackArray as TrackArrayMsg
+
 # Reuse the generated stubs from lidar_grpc_bridge rather than keeping a second copy
 # that can drift from the .proto. They use absolute imports (`import lidar_stream_pb2`)
 # because that is what protoc emits, so put their directory on sys.path to resolve it.
@@ -33,6 +45,8 @@ import lidar_grpc_bridge  # noqa: F401  (imported for its __file__ location)
 sys.path.insert(0, os.path.dirname(os.path.abspath(lidar_grpc_bridge.__file__)))
 import lidar_stream_pb2          # noqa: E402
 import lidar_stream_pb2_grpc     # noqa: E402
+import track_stream_pb2          # noqa: E402
+import track_stream_pb2_grpc     # noqa: E402
 
 
 class GrpcScanClientNode(Node):
@@ -56,6 +70,11 @@ class GrpcScanClientNode(Node):
         # enough apart that TF/RViz reject the scans as too old.
         self.declare_parameter("use_source_timestamp", True)
 
+        # Return path (see module docstring): push tracks up on a second call to the
+        # same server/port instead of running a separate gRPC server on this machine.
+        self.declare_parameter("enable_track_push", True)
+        self.declare_parameter("track_array_topic", "/dr_spaam_tracker_node/track_array")
+
         self.server_address = self.get_parameter("server_address").get_parameter_value().string_value
         self.server_port = self.get_parameter("server_port").get_parameter_value().integer_value
         self.scan_topic = self.get_parameter("scan_topic").get_parameter_value().string_value
@@ -64,6 +83,8 @@ class GrpcScanClientNode(Node):
         self.max_message_mb = self.get_parameter("max_message_mb").get_parameter_value().integer_value
         self.status_log_period_s = self.get_parameter("status_log_period_s").get_parameter_value().double_value
         self.use_source_timestamp = self.get_parameter("use_source_timestamp").get_parameter_value().bool_value
+        self.enable_track_push = self.get_parameter("enable_track_push").get_parameter_value().bool_value
+        self.track_array_topic = self.get_parameter("track_array_topic").get_parameter_value().string_value
 
         # Default (RELIABLE) QoS, deliberately NOT qos_profile_sensor_data:
         # dr_spaam_ros2_node subscribes with plain depth-10 default QoS, i.e. RELIABLE.
@@ -84,6 +105,17 @@ class GrpcScanClientNode(Node):
         self._rx_thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._rx_thread.start()
 
+        push_status_line = "disabled (enable_track_push:=false)"
+        if self.enable_track_push:
+            self._track_queue = queue.Queue(maxsize=1)
+            self._push_stop = threading.Event()
+            self._track_sub = self.create_subscription(
+                TrackArrayMsg, self.track_array_topic, self._track_array_callback, 10
+            )
+            self._tx_thread = threading.Thread(target=self._push_loop, daemon=True)
+            self._tx_thread.start()
+            push_status_line = f"{self.track_array_topic} -> TrackService/PushTracks"
+
         self.get_logger().info(
             f"\n"
             f"  ╔══════════════════════════════════════════╗\n"
@@ -92,6 +124,7 @@ class GrpcScanClientNode(Node):
             f"  Pulling from  : {self._target}  (LidarService/StreamScan)\n"
             f"  Republishing  : {self.scan_topic}  (frame '{self.frame_id}')\n"
             f"  Timestamps    : {'source (robot clock)' if self.use_source_timestamp else 'local arrival time'}\n"
+            f"  Pushing tracks: {push_status_line}\n"
             f"  Set 'server_address' to the host running lidar_grpc_bridge."
         )
 
@@ -170,10 +203,76 @@ class GrpcScanClientNode(Node):
             f"[gRPC client] {state} | {rate:.1f} scans/s out | {self._scan_count} total"
         )
 
+    # ── Return path: push tracks up ──────────────────────────────────────────────
+
+    def _track_array_callback(self, msg: TrackArrayMsg):
+        """ROS executor thread. Converts to protobuf here so the push thread only
+        ever handles already-built messages, matching how _scan_callback works on
+        the server side of this same link."""
+        stamp = msg.header.stamp
+        pb = track_stream_pb2.TrackArray(
+            timestamp=stamp.sec + stamp.nanosec * 1e-9,
+            frame_id=msg.header.frame_id,
+        )
+        for t in msg.tracks:
+            pb.tracks.add(
+                id=t.id, x=t.x, y=t.y, vx=t.vx, vy=t.vy,
+                speed=t.speed, heading=t.heading, moving=t.moving,
+            )
+        try:
+            self._track_queue.put_nowait(pb)
+        except queue.Full:
+            # Latest-wins: a stale track set is worse for a reacting planner than one
+            # that arrives a beat late but current, same reasoning as the scan side.
+            try:
+                self._track_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._track_queue.put_nowait(pb)
+            except queue.Full:
+                pass
+
+    def _track_generator(self):
+        """Consumed by stub.PushTracks(...). Blocks between items rather than
+        polling; returning ends the RPC cleanly so the call can be retried."""
+        while not self._push_stop.is_set() and rclpy.ok():
+            try:
+                yield self._track_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+    def _push_loop(self):
+        """Independent reconnect loop for the push direction — see module docstring
+        for why this is a separate connection rather than sharing the pull channel."""
+        while not self._push_stop.is_set() and rclpy.ok():
+            channel = None
+            try:
+                channel = grpc.insecure_channel(self._target)
+                stub = track_stream_pb2_grpc.TrackServiceStub(channel)
+                ack = stub.PushTracks(self._track_generator())
+                self.get_logger().info(f"Track push stream ended (acked {ack.tracks_received} track(s))")
+            except grpc.RpcError as e:
+                code = e.code() if hasattr(e, "code") else None
+                self.get_logger().warn(f"Track push failed ({code}); retrying in {self.reconnect_delay_s}s")
+            except Exception as e:
+                self.get_logger().error(f"Unexpected error in track push loop: {e}")
+            finally:
+                if channel is not None:
+                    channel.close()
+
+            if self._push_stop.is_set() or not rclpy.ok():
+                break
+            time.sleep(self.reconnect_delay_s)
+
     def shutdown(self):
         self._stop.set()
         if self._rx_thread.is_alive():
             self._rx_thread.join(timeout=3.0)
+        if self.enable_track_push:
+            self._push_stop.set()
+            if self._tx_thread.is_alive():
+                self._tx_thread.join(timeout=3.0)
 
 
 def main(args=None):

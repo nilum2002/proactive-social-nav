@@ -14,3 +14,9 @@ grpc_scan_client_node:
     max_message_mb: 10
     status_log_period_s: 5.0
     use_source_timestamp: true  # keep robot clock stamps so tracker dt stays jitter-free
+
+    # Return path: push dr_spaam_tracker_node's output up to the robot on a second
+    # call to the same server/port used to pull scans (TrackService/PushTracks).
+    enable_track_push: true
+    track_array_topic: "/dr_spaam_tracker_node/track_array"
+

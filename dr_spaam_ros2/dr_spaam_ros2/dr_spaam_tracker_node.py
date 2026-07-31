@@ -6,6 +6,7 @@ from rclpy.time import Time
 from geometry_msgs.msg import Point, Pose, PoseArray, Vector3
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
+from proactive_nav_msgs.msg import Track as TrackMsg, TrackArray
 
 # Try importing scipy for Hungarian algorithm, fallback to greedy association if not present
 try:
@@ -144,12 +145,14 @@ class Track:
     # Smooths the prediction arrow direction without touching position tracking.
     _VEL_ALPHA = 0.35
 
-    def __init__(self, track_id, position, std_a_x, std_a_y, r_laser):
+    def __init__(self, track_id, position, std_a_x, std_a_y, r_laser, confirm_frames):
         self.id = track_id
         # Initialize state with position and zero velocity
         x_init = [position[0], position[1], 0.0, 0.0]
         self.kf = KalmanFilter(x_init, std_a_x, std_a_y, r_laser)
 
+        # Consecutive matched updates required before this track is published as ACTIVE.
+        self.confirm_frames = confirm_frames
         self.age = 1
         self.lost_count = 0
         self.static_count = 0       # Consecutive frames where speed < threshold
@@ -166,9 +169,9 @@ class Track:
         self.kf.update(position)
         self.lost_count = 0
         self.age += 1
-        # Require 5 consecutive matches before publishing — filters out DR-SPAAM spurious blips
-        # that appear for 1–3 frames then vanish (walls, glass, passing objects).
-        if self.state == "TENTATIVE" and self.age >= 5:
+        # Require confirm_frames consecutive matches before publishing — filters out DR-SPAAM
+        # spurious blips that appear for a few frames then vanish (walls, glass, passing objects).
+        if self.state == "TENTATIVE" and self.age >= self.confirm_frames:
             self.state = "ACTIVE"
 
         # Update smoothed velocity for prediction (EMA — does not affect KF state)
@@ -221,6 +224,7 @@ class DrSpaamTrackerNode(Node):
         self.declare_parameter("detections_topic", "/dr_spaam_ros2_node/detections")
         self.declare_parameter("tracks_topic", "~/tracks")
         self.declare_parameter("markers_topic", "~/markers")
+        self.declare_parameter("track_array_topic", "~/track_array")
 
         # Association and Track management limits
         self.declare_parameter("association_threshold", 1.0)  # Max matching dist (meters)
@@ -231,15 +235,22 @@ class DrSpaamTrackerNode(Node):
         self.declare_parameter("std_a_y", 1.5)                 # Process acceleration noise Y
         self.declare_parameter("r_laser", 0.20)                # Measurement noise (std dev)
         self.declare_parameter("prediction_horizon", 1.5)      # Prediction time horizon (seconds)
+        # Consecutive matched frames before a new track is confirmed ACTIVE and published.
+        # Lower = faster to show up as tracked, but more likely to confirm a spurious blip.
+        self.declare_parameter("confirm_frames", 5)
 
         # Static object filter parameters
         self.declare_parameter("static_speed_threshold", 0.15)  # Speed below this (m/s) is considered static
         self.declare_parameter("static_frames_required", 15)    # Consecutive static frames before removal
 
+        # Reference circle drawn around the lidar origin (visualization only)
+        self.declare_parameter("lidar_radius_m", 1.0)
+
         # Extract values
         self.dets_topic = self.get_parameter("detections_topic").get_parameter_value().string_value
         self.tracks_topic = self.get_parameter("tracks_topic").get_parameter_value().string_value
         self.markers_topic = self.get_parameter("markers_topic").get_parameter_value().string_value
+        self.track_array_topic = self.get_parameter("track_array_topic").get_parameter_value().string_value
 
         self.association_thresh = self.get_parameter("association_threshold").get_parameter_value().double_value
         self.max_lost_frames = self.get_parameter("max_lost_frames").get_parameter_value().integer_value
@@ -248,14 +259,15 @@ class DrSpaamTrackerNode(Node):
         self.std_a_y = self.get_parameter("std_a_y").get_parameter_value().double_value
         self.r_laser = self.get_parameter("r_laser").get_parameter_value().double_value
         self.prediction_horizon = self.get_parameter("prediction_horizon").get_parameter_value().double_value
+        self.confirm_frames = self.get_parameter("confirm_frames").get_parameter_value().integer_value
         self.static_speed_thresh = self.get_parameter("static_speed_threshold").get_parameter_value().double_value
         self.static_frames_req = self.get_parameter("static_frames_required").get_parameter_value().integer_value
+        self.lidar_radius_m = self.get_parameter("lidar_radius_m").get_parameter_value().double_value
 
         # ── State Initialization ─────────────────────────────────────────────
         self.tracks = []
         self.next_track_id = 1
         self.last_time = None
-        self._stale_msg_count = 0
         # Static blacklist: list of (x, y, expiry_time) for positions of removed static objects.
         # New detections too close to a blacklisted position are rejected (not spawned as tracks).
         self.static_blacklist = []   # [(x, y, expiry_ros_time), ...]
@@ -265,6 +277,8 @@ class DrSpaamTrackerNode(Node):
             PoseArray, self.dets_topic, self._dets_callback, 10
         )
         self.tracks_pub = self.create_publisher(PoseArray, self.tracks_topic, 10)
+        # Full state (id, position, velocity, heading) for off-board consumers.
+        self.track_array_pub = self.create_publisher(TrackArray, self.track_array_topic, 10)
         self.markers_pub = self.create_publisher(MarkerArray, self.markers_topic, 10)
 
         self.get_logger().info(
@@ -277,6 +291,7 @@ class DrSpaamTrackerNode(Node):
             f"  Publishing RViz  : {self.markers_topic}\n"
             f"  Assoc. Threshold : {self.association_thresh}m\n"
             f"  Max Lost Frames  : {self.max_lost_frames}\n"
+            f"  Confirm Frames   : {self.confirm_frames}\n"
             f"  Pred. Horizon    : {self.prediction_horizon}s\n"
             f"  Static Filter    : speed<{self.static_speed_thresh}m/s for {self.static_frames_req} frames\n"
             f"  Hungarian Solver : {'Scipy Hungarian' if HAS_SCIPY else 'Greedy Matching'}"
@@ -289,17 +304,17 @@ class DrSpaamTrackerNode(Node):
             self.get_logger().error(f"[TRACKER] Exception in callback: {e}")
 
     def _process_detections(self, msg: PoseArray):
-        # 1. Compute dt from the SENSOR timestamp, not arrival time.
-        # Velocity is effectively (position delta / dt), so dt must measure the interval
-        # the position delta actually happened over. Arrival time does not: if the same
-        # scan is delivered several times (duplicate publishers, a /scan feedback loop),
-        # arrival times are milliseconds apart while the position delta still spans a
-        # full scan period, so the filter infers a velocity inflated by the duplication
-        # factor and the track shoots forward. Sensor stamps make duplicates identical
-        # (dt == 0), which the guard below then drops instead of believing.
+        # 1. Compute time step dt from the SENSOR timestamp, not arrival time.
+        # dt scales F and Q, and velocity is effectively (position delta / dt), so any
+        # error here propagates straight into the velocity estimate. Callback arrival
+        # time includes network jitter and variable inference latency — over a WiFi
+        # link that is tens of ms of noise on a ~100 ms step. The header stamp is set
+        # once by the lidar driver, so successive stamps differ by the true scan
+        # interval regardless of transport delay. (Any constant clock offset between
+        # robot and laptop cancels in the difference.)
         stamp = Time.from_msg(msg.header.stamp)
         if stamp.nanoseconds == 0:
-            # Upstream published an unset stamp — fall back to arrival time.
+            # Driver published an unset stamp — fall back to arrival time.
             stamp = self.get_clock().now()
 
         if self.last_time is None:
@@ -307,35 +322,11 @@ class DrSpaamTrackerNode(Node):
             return
 
         dt = (stamp - self.last_time).nanoseconds / 1e9
+        self.last_time = stamp
 
         # Avoid dt anomalies
-        # A non-positive dt means this message carries a stamp we have already seen
-        # (a duplicate) or one older than the last (out of order). Substituting a
-        # nominal 0.1 s here — the previous behaviour — makes the filter advance a full
-        # prediction step for a scan that represents no elapsed time. Under a duplicate
-        # storm that compounds: N duplicates per second each advance 0.1 s, so the CV
-        # model extrapolates N/10 times faster than real time and tracks visibly race
-        # ahead of the person the moment velocity becomes non-zero. Drop the message
-        # instead — re-predicting on a repeated observation cannot add information.
-        if dt <= 0.0:
-            self._stale_msg_count += 1
-            if self._stale_msg_count % 50 == 1:
-                self.get_logger().warn(
-                    f"Dropped {self._stale_msg_count} duplicate/out-of-order detection "
-                    f"message(s) (dt={dt:.4f}s). Check for multiple publishers on the "
-                    f"scan topic — a /scan feedback loop produces exactly this."
-                )
-            return
-
-        # A large gap is a real stall (node restart, dropped link) rather than a
-        # duplicate; clamp so Q stays sane instead of exploding on a huge dt.
-        if dt > 2.0:
+        if dt <= 0.0 or dt > 2.0:
             dt = 0.1
-
-        # Only advance the reference once the message is accepted. Updating it before
-        # the guards would let a rejected out-of-order stamp become the new baseline,
-        # making the next (correctly ordered) message compute an inflated dt.
-        self.last_time = stamp
 
         # 2. Extract detection coordinates
         detections = []
@@ -412,7 +403,9 @@ class DrSpaamTrackerNode(Node):
                     for (bx, by, _) in self.static_blacklist
                 )
                 if not is_blacklisted:
-                    new_track = Track(self.next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser)
+                    new_track = Track(
+                        self.next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser, self.confirm_frames
+                    )
                     self.tracks.append(new_track)
                     self.next_track_id += 1
 
@@ -440,6 +433,8 @@ class DrSpaamTrackerNode(Node):
         # 6. PUBLISH TRACKED POSES (only moving, active tracks)
         tracks_msg = PoseArray()
         tracks_msg.header = msg.header
+        track_array = TrackArray()
+        track_array.header = msg.header
         for track in self.tracks:
             if track.state == "ACTIVE":
                 p = Pose()
@@ -447,7 +442,22 @@ class DrSpaamTrackerNode(Node):
                 p.position.y = track.position[1]
                 p.position.z = 0.0
                 tracks_msg.poses.append(p)
+
+                # Full state for consumers off-board. PoseArray carries position only,
+                # so velocity — the thing a proactive planner actually needs — had no
+                # way out of this node except as RViz arrows.
+                vx, vy = track.velocity
+                t = TrackMsg()
+                t.id = int(track.id)
+                t.x, t.y = float(track.position[0]), float(track.position[1])
+                t.vx, t.vy = float(vx), float(vy)
+                t.speed = float(np.hypot(vx, vy))
+                t.heading = float(np.arctan2(vy, vx))
+                t.moving = bool(not track.is_static)
+                track_array.tracks.append(t)
+
         self.tracks_pub.publish(tracks_msg)
+        self.track_array_pub.publish(track_array)
 
         # 7. PUBLISH RVIZ MARKERS
         self._publish_rviz_markers(msg.header)
@@ -463,6 +473,27 @@ class DrSpaamTrackerNode(Node):
 
         marker_array = MarkerArray()
         lifetime = Duration(seconds=0.5).to_msg()
+
+        # ── 0. Reference circle around the lidar origin ──────────────────────
+        circle = Marker()
+        circle.header = header
+        circle.ns = "lidar_range_circle"
+        circle.id = 0
+        circle.type = Marker.LINE_STRIP
+        circle.action = Marker.ADD
+        circle.scale.x = 0.02
+        circle.color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.6)
+        num_segments = 36
+        circle.points = [
+            Point(
+                x=self.lidar_radius_m * np.cos(theta),
+                y=self.lidar_radius_m * np.sin(theta),
+                z=0.02,
+            )
+            for theta in np.linspace(0, 2 * np.pi, num_segments + 1)  # +1 closes the loop
+        ]
+        circle.lifetime = lifetime
+        marker_array.markers.append(circle)
 
         for track in self.tracks:
             if track.state != "ACTIVE":
