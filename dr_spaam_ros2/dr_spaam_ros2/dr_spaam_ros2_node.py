@@ -1,6 +1,11 @@
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
+from rclpy.time import Time
+
+import tf2_ros
+from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Point, Pose, PoseArray
@@ -31,6 +36,14 @@ class DrSpaamROS2(Node):
         # Cap detections beyond this distance (metres). Overrides the sensor's hardware max.
         # Set to -1.0 to use the sensor's native range_max.
         self.declare_parameter("max_range", -1.0)
+        # Fixed frame detections are transformed into before publishing. base_laser (the
+        # scan's own frame_id) moves and rotates with the robot, so a stationary object
+        # picks up apparent velocity from the robot's own motion whenever dr_spaam_tracker_node
+        # runs its Kalman filter directly on sensor-frame positions. odom is not itself
+        # perfectly drift-free, but unlike base_laser it doesn't rotate with the chassis,
+        # which is what was corrupting the tracker's velocity/prediction output.
+        self.declare_parameter("world_frame", "odom")
+        self.declare_parameter("tf_timeout_s", 0.1)
 
         # Get parameters
         self.weight_file = self.get_parameter("weight_file").get_parameter_value().string_value
@@ -42,8 +55,13 @@ class DrSpaamROS2(Node):
         self.use_gpu = self.get_parameter("gpu").get_parameter_value().bool_value
         self.scan_fov_deg = self.get_parameter("scan_fov_deg").get_parameter_value().double_value
         self.max_range = self.get_parameter("max_range").get_parameter_value().double_value
+        self.world_frame = self.get_parameter("world_frame").get_parameter_value().string_value
+        self.tf_timeout_s = self.get_parameter("tf_timeout_s").get_parameter_value().double_value
         # Half-angle in radians defining the keep window: [-half_fov, +half_fov]
         self._half_fov_rad = np.deg2rad(self.scan_fov_deg / 2.0)
+
+        self._tf_buffer = tf2_ros.Buffer()
+        self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
 
         self.get_logger().info(f"Initializing detector '{self.detector_model}' with checkpoint: '{self.weight_file}'")
 
@@ -127,15 +145,68 @@ class DrSpaamROS2(Node):
         dets_xy = dets_xy[conf_mask]
         dets_cls = dets_cls[conf_mask]
 
+        # Transform into the fixed world frame before publishing. dr_spaam_tracker_node's
+        # Kalman filter derives velocity from (position delta / dt); positions still in
+        # base_laser would fold the robot's own motion into that velocity, producing wrong
+        # "moving" predictions for stationary objects whenever the robot turns or drives.
+        world_xy = self._transform_to_world(dets_xy, msg.header)
+        if world_xy is None:
+            return  # TF not ready yet — drop this scan's detections rather than
+            # publish them in the wrong frame silently.
+
         # Convert to geometry_msgs/PoseArray
-        dets_msg = self.detections_to_pose_array(dets_xy, dets_cls)
-        dets_msg.header = msg.header
+        dets_msg = self.detections_to_pose_array(world_xy, dets_cls)
+        dets_msg.header.stamp = msg.header.stamp
+        dets_msg.header.frame_id = self.world_frame
         self._dets_pub.publish(dets_msg)
 
         # Convert to visualization_msgs/Marker
         rviz_msg = self.detections_to_rviz_marker(dets_xy, dets_cls)
         rviz_msg.header = msg.header
         self._rviz_pub.publish(rviz_msg)
+
+    def _transform_to_world(self, dets_xy, header):
+        """Transform Nx2 sensor-frame points into self.world_frame using the TF tree.
+
+        Applied as a single 2D rigid transform (yaw + translation) rather than per-point
+        PoseStamped transforms — the scan frame is planar (z=0) and every point in one
+        scan shares the same transform, so there is nothing per-point TF lookup would add.
+        """
+        try:
+            # odom/tf reach this machine over raw ROS2 DDS on the same WiFi link the
+            # scan bridge was deliberately built to avoid (see grpc_lidar_server_node.py) —
+            # in practice the newest TF sample tends to sit ~1s behind the gRPC-delivered
+            # scan's own stamp, so an exact-stamp lookup would fail almost every time.
+            # Time() (zero) asks for the latest transform tf2 has, not one at this exact
+            # instant. For a lawnmower's walking-pace speeds, a pose up to ~1s old is
+            # still far more correct than skipping the transform entirely.
+            tf = self._tf_buffer.lookup_transform(
+                self.world_frame,
+                header.frame_id,
+                Time(),
+                timeout=Duration(seconds=self.tf_timeout_s),
+            )
+        except (LookupException, ConnectivityException, ExtrapolationException) as e:
+            self.get_logger().warn(
+                f"TF {header.frame_id} -> {self.world_frame} unavailable ({e}); "
+                f"dropping this scan's detections",
+                throttle_duration_sec=5.0,
+            )
+            return None
+
+        if len(dets_xy) == 0:
+            return dets_xy
+
+        t = tf.transform.translation
+        q = tf.transform.rotation
+        yaw = np.arctan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
+
+        dets_xy = np.asarray(dets_xy)
+        world_xy = np.empty_like(dets_xy)
+        world_xy[:, 0] = t.x + cos_yaw * dets_xy[:, 0] - sin_yaw * dets_xy[:, 1]
+        world_xy[:, 1] = t.y + sin_yaw * dets_xy[:, 0] + cos_yaw * dets_xy[:, 1]
+        return world_xy
 
     def detections_to_pose_array(self, dets_xy, dets_cls):
         pose_array = PoseArray()
