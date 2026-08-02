@@ -7,9 +7,8 @@ dr_spaam_ros2_node:
     panoramic_scan: true
     scan_topic: "/scan"
     gpu: true
-    scan_fov_deg: 270.0       # Crop scan to 270° (removes rear 90° where robot body is)
-    max_range: 12.0           # Max detection distance in metres (-1.0 = use sensor hardware max of 12 m)
-
+    scan_fov_deg: 270.0
+    max_range: 12.0
 
 dr_spaam_ros2_node_debug:
   ros__parameters:
@@ -31,14 +30,12 @@ dr_spaam_tracker_node:
     markers_topic: "~/markers"
     association_threshold: 1.0
     max_lost_frames: 10
-    std_a_x: 1.0               # Process acceleration noise X (m/s^2) — MUST be > 0
-    std_a_y: 1.0                 # Process acceleration noise Y (m/s^2) — MUST be > 0
-    r_laser: 0.20
+    std_a_x: 1.5
+    std_a_y: 1.5
+    r_laser: 2.0
     prediction_horizon: 2.0
-    confirm_frames: 8  # Consecutive matches before a track is confirmed ACTIVE (lower = faster, less certain)
-
-    # Static object filter — removes false positives from walls/glass/furniture
-    static_speed_threshold:  0.05  # Speed below this (m/s) is considered static
-    static_frames_required: 8    # Must be static for this many consecutive frames
-
-    lidar_radius_m: 1.0  # Radius (m) of the reference circle drawn around the lidar in RViz
+    confirm_frames: 8 
+    static_speed_threshold:  0.01
+    static_frames_required: 15
+    lidar_radius_m: 2.0  
+    tf_timeout_s: 0.5 
