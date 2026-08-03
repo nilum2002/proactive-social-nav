@@ -36,6 +36,6 @@ dr_spaam_tracker_node:
     prediction_horizon: 2.0
     confirm_frames: 8 
     static_speed_threshold:  0.01
-    static_frames_required: 15
+    static_frames_required: 5
     lidar_radius_m: 2.0  
-    tf_timeout_s: 0.5 
+    tf_timeout_s: 0.0001

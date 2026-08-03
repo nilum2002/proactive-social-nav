@@ -3,4 +3,5 @@ source /media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-n
 export PYTHONPATH="$PYTHONPATH:/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/dr_spaam"
 cd /media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/ros2_ws
 source install/setup.bash
+export ROS_LOCALHOST_ONLY=1
 ros2 launch dr_spaam_ros2 dr_spaam_tracker_no_tf.launch.py

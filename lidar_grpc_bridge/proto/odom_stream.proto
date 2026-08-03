@@ -1,20 +1,12 @@
-// Odometry pose travelling from the robot to the inference host over the same gRPC
-// link used for scans, so RViz/tf2 on the laptop don't depend on native ROS2 DDS
-// discovery reaching across the network — the same reason lidar_stream.proto exists
-// for LaserScan instead of a plain ROS2 topic.
-//
-// Regenerate with (from the package root, venv active):
-//   python -m grpc_tools.protoc -I proto --python_out=lidar_grpc_bridge \
-//       --grpc_python_out=lidar_grpc_bridge proto/odom_stream.proto
+//Odometry protocol buffer 
 
 syntax = "proto3";
 
 package odom;
 
-// Mirrors the planar pose + twist that kobuki_base_node computes and broadcasts
-// locally on the robot (nav_msgs/Odometry + tf odom->base_link).
+// (nav_msgs/Odometry + tf odom->base_link).
 message OdometryData {
-  double timestamp = 1;  // seconds; from the source Odometry header stamp
+  double timestamp = 1;  // seconds 
   double x = 2;          // m, odom frame
   double y = 3;          // m, odom frame
   double qz = 4;          // orientation quaternion z (planar yaw only)

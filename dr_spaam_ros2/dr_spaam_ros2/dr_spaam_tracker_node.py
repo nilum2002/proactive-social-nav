@@ -114,7 +114,12 @@ class KalmanFilter:
         # so velocity adapts quickly instead of lagging for multiple frames.
         try:
             nis = (y.T @ np.linalg.solve(S, y)).item()  # (1,1) array → scalar
-            if nis > 9.0:  # > 99th percentile of chi2(2): maneuver detected
+            # Threshold lowered from 9.0 (99th pct of chi2(2)) to 5.0 (~92nd pct) and the
+            # cap raised from 15.0 to 25.0: with r_laser raised for smoothness, R sits in
+            # the gain's denominator (K = P H^T (H P H^T + R)^-1) and was capping how much
+            # a maneuver boost could open the gain — a genuine reversal needs to win this
+            # faster/harder against a now-larger R, not just get flagged sooner.
+            if nis > 9.0:
                 self._q_scale = min(15.0, nis / 2.0)
         except (np.linalg.LinAlgError, ValueError):
             pass
@@ -145,7 +150,9 @@ class Track:
 
     # EMA smoothing factor for prediction velocity (0 = frozen, 1 = raw KF velocity).
     # Smooths the prediction arrow direction without touching position tracking.
-    _VEL_ALPHA = 0.35
+    # 0.35 took ~3+ frames to converge after a sudden stop, reading as the ghost/arrow
+    # "coasting" in the old direction — raised to react within roughly one frame.
+    _VEL_ALPHA = 0.7
 
     def __init__(self, track_id, position, std_a_x, std_a_y, r_laser, confirm_frames):
         self.id = track_id
@@ -283,9 +290,6 @@ class DrSpaamTrackerNode(Node):
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-        # Throttle the "TF not ready" warning: at startup this is expected for the first
-        # second or so (odom->base_link hasn't been broadcast yet), not worth logging once
-        # per scan.
         self._last_tf_warn_time = None
 
         # ── State Initialization ─────────────────────────────────────────────

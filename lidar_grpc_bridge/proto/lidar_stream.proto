@@ -1,11 +1,4 @@
-// Recovered from the checked-in generated modules (lidar_stream_pb2.py), which were
-// committed without their source .proto. Field numbers, types and the service
-// signature are taken verbatim from the serialized descriptor, so regenerating from
-// this file reproduces the existing lidar_stream_pb2*.py byte-for-byte.
-//
-// Regenerate with (from the package root, venv active):
-//   python -m grpc_tools.protoc -I proto --python_out=lidar_grpc_bridge \
-//       --grpc_python_out=lidar_grpc_bridge proto/lidar_stream.proto
+// Lidar Stream
 
 syntax = "proto3";
 
