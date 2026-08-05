@@ -38,4 +38,4 @@ dr_spaam_tracker_node:
     static_speed_threshold:  0.01
     static_frames_required: 5
     lidar_radius_m: 2.0  
-    tf_timeout_s: 0.0001
+    tf_timeout_s: 0.0
