@@ -1,0 +1,50 @@
+# Documentation for ROS 2: https://index.ros.org/p/robot_localization/
+ekf_filter_node:
+  ros__parameters:
+    # EKF general settings
+    frequency: 20.0           # Bumped to 20Hz for smoother physical drive TF updates
+    sensor_timeout: 0.1       # Lowered to 100ms for fast physical sensor fail-safes
+    two_d_mode: true          # Constrains Z, roll, pitch, and their velocities to 0
+    transform_time_offset: 0.0
+
+    # Frames (REP-105 standard setup)
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Publish state
+    publish_tf: true
+    publish_acceleration: false
+
+    # Odom input (wheel odometry)
+    odom0: /odom
+    # Fusing X velocity, Y velocity, and Yaw angular velocity
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true, true, false,
+                   false, false, false,
+                   false, false, false]
+
+    odom0_queue_size: 10
+    odom0_nodelay: false
+    odom0_relative: false
+
+    # IMU input
+    imu0: /imu
+    # Fusing relative-start absolute Yaw, and Yaw angular velocity
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false] # Set the last row first element to 1 if fusing X acceleration
+    imu0_queue_size: 10
+    imu0_nodelay: false
+    imu0_relative: true
+
+    # Core 15-element tracking vector initialization required by ROS 2 Humble
+    initial_state: [0.0, 0.0, 0.0, 
+                    0.0, 0.0, 0.0, 
+                    0.0, 0.0, 0.0, 
+                    0.0, 0.0, 0.0, 
+                    0.0, 0.0, 0.0]
