@@ -142,16 +142,22 @@ class KobukiDriver:
             sub_data = payload[i+2 : i+2+sub_len]
 
             if sub_id == 0x01: # Basic Sensor Data
-                # Unpack 15 bytes of basic data
-                # Bumper(1), WheelDrop(1), Cliff(1), L_Enc(2), R_Enc(2)...
-                b, wd, c, l_enc, r_enc = struct.unpack('<BBBHH', sub_data[0:7])
+                # 15 bytes, opening with a 2-byte timestamp.
+                #   ts(2) bumper(1) wheel_drop(1) cliff(1) L_Enc(2) R_Enc(2)
+                #   L_PWM(1) R_PWM(1) button(1) charger(1) battery(1) overcurrent(1)
+                if len(sub_data) < 15:
+                    i += (2 + sub_len)
+                    continue
+                (_ts, b, wd, c, l_enc, r_enc,
+                 _l_pwm, _r_pwm, _button, _charger,
+                 battery, _overcurrent) = struct.unpack('<HBBBHHbbBBBB', sub_data[0:15])
                 with self._state_lock:
                     self.state.basic.bumper = b
                     self.state.basic.wheel_drop = wd
                     self.state.basic.cliff = c
                     self.state.basic.encoder_l = l_enc
                     self.state.basic.encoder_r = r_enc
-                    self.state.basic.battery = sub_data[11]
+                    self.state.basic.battery = battery
                     self.state.basic.updated_at = packet_ts
                     self._update_odom(l_enc, r_enc, packet_ts)
 
@@ -231,23 +237,33 @@ class KobukiDriver:
         linear_vel: mm/s
         angular_vel: rad/s
         """
-        # Kobuki expects Speed (mm/s) and Radius (mm)
-        # Radius = v / w
-        if abs(angular_vel) < 0.001:
-            radius = 0
-        elif abs(linear_vel) < 10:
-            radius = 1 if angular_vel > 0 else -1
-            linear_vel = float((angular_vel * 1000 * self.WHEEL_BASE) / 2)
+        eps = 1e-4
+        vx = linear_vel / 1000.0                       # m/s
+        wz = float(angular_vel)                        # rad/s
+        half_bias = 1000.0 * self.WHEEL_BASE / 2.0     # mm
+
+        if abs(wz) < eps:
+            # Straight line.
+            radius = 0.0
+            speed = 1000.0 * vx
         else:
-            radius = int(linear_vel / angular_vel)
-            # Clip radius to Kobuki limits
-            if radius > 2500: radius = 0
-            elif radius < -2500: radius = 0
+            radius = vx * 1000.0 / wz
+            if abs(vx) < eps or abs(radius) <= 1.0:
+                # Rotation about the robot's centre.
+                speed = half_bias * wz
+                radius = 1.0
+            elif radius > 0.0:
+                speed = (radius + half_bias) * wz
+            else:
+                speed = (radius - half_bias) * wz
+
+        speed = max(-32768, min(32767, int(round(speed))))
+        radius = max(-32768, min(32767, int(round(radius))))
 
         # Build Packet
         payload = bytearray([0x01, 0x04])
-        payload += int(linear_vel).to_bytes(2, 'little', signed=True)
-        payload += int(radius).to_bytes(2, 'little', signed=True)
+        payload += speed.to_bytes(2, 'little', signed=True)
+        payload += radius.to_bytes(2, 'little', signed=True)
         
         header = bytearray([0xAA, 0x55, len(payload)])
         packet = header + payload

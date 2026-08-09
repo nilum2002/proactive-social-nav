@@ -31,13 +31,36 @@ def generate_launch_description():
             default_value='base_link',
             description='Parent frame the LiDAR is mounted on',
         ),
+        DeclareLaunchArgument(
+            'mount_x',
+            default_value='0.1',
+            description='LiDAR mount offset forward of parent_frame, in metres',
+        ),
+        DeclareLaunchArgument(
+            'mount_y',
+            default_value='0.0',
+            description='LiDAR mount offset left of parent_frame, in metres',
+        ),
+        DeclareLaunchArgument(
+            'mount_z',
+            default_value='0.05',
+            description='LiDAR mount height above parent_frame, in metres',
+        ),
+        DeclareLaunchArgument(
+            'mount_yaw',
+            default_value='0.0',
+            description='LiDAR yaw relative to parent_frame, in radians',
+        ),
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
             name='laser_static_tf',
             arguments=[
-                '--x', '0.0', '--y', '0.0', '--z', '0.0',
-                '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0',
+                '--x', LaunchConfiguration('mount_x'),
+                '--y', LaunchConfiguration('mount_y'),
+                '--z', LaunchConfiguration('mount_z'),
+                '--roll', '0.0', '--pitch', '0.0',
+                '--yaw', LaunchConfiguration('mount_yaw'),
                 '--frame-id', LaunchConfiguration('parent_frame'),
                 '--child-frame-id', LaunchConfiguration('frame_id'),
             ],

@@ -2,9 +2,10 @@ import math
 import rclpy
 from rclpy.node import Node
 
-from geometry_msgs.msg import Twist, Quaternion
+from geometry_msgs.msg import Twist, Quaternion, TransformStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
+from tf2_ros import TransformBroadcaster
 
 from kobuki_driver.kuboki_driver import KobukiDriver
 
@@ -26,12 +27,14 @@ class KobukiRosNode(Node):
         self.declare_parameter('port', '/dev/kobuki')
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('cmd_rate', 10)
-        self.declare_parameter('odom_pub_rate', 10)
+        self.declare_parameter('odom_pub_rate', 30)
+        self.declare_parameter('publish_odom_tf', True)
 
         port = self.get_parameter('port').get_parameter_value().string_value
         cmd_timeout = self.get_parameter('cmd_timeout').get_parameter_value().double_value
         cmd_rate = int(self.get_parameter('cmd_rate').get_parameter_value().integer_value)
         odom_rate = int(self.get_parameter('odom_pub_rate').get_parameter_value().integer_value)
+        self._publish_odom_tf = self.get_parameter('publish_odom_tf').get_parameter_value().bool_value
 
         # Initialize driver
         try:
@@ -45,10 +48,16 @@ class KobukiRosNode(Node):
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
         self.imu_pub = self.create_publisher(Imu, '/imu', 10)
 
+        # odom -> base_link transform
+        self._tf_broadcaster = TransformBroadcaster(self) if self._publish_odom_tf else None
+
         # Timer to publish odom and imu
         self._odom_timer = self.create_timer(1.0 / max(1, odom_rate), self._publish_state)
 
-        self.get_logger().info('Kobuki ROS node initialized')
+        self.get_logger().info(
+            f'Kobuki ROS node initialized (odom rate {odom_rate} Hz, '
+            f'odom->base_link TF {"enabled" if self._publish_odom_tf else "disabled"})'
+        )
 
     def cmd_vel_cb(self, msg: Twist):
         # Convert linear m/s -> mm/s for driver, pass angular z as rad/s
@@ -84,6 +93,19 @@ class KobukiRosNode(Node):
         odom.twist.twist.angular.z = state.get('angular_velocity', 0.0)
 
         self.odom_pub.publish(odom)
+
+        # Same pose, broadcast as a transform so TF consumers (costmaps, SLAM,
+        # the controller) can look the robot up rather than parsing /odom.
+        if self._tf_broadcaster is not None:
+            tf = TransformStamped()
+            tf.header.stamp = now
+            tf.header.frame_id = 'odom'
+            tf.child_frame_id = 'base_link'
+            tf.transform.translation.x = odom.pose.pose.position.x
+            tf.transform.translation.y = odom.pose.pose.position.y
+            tf.transform.translation.z = 0.0
+            tf.transform.rotation = q
+            self._tf_broadcaster.sendTransform(tf)
 
         # IMU
         imu = Imu()
