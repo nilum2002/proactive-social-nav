@@ -12,7 +12,7 @@ class LidarNode(Node):
     def __init__(self):
         super().__init__('lidar_node')
 
-        self.declare_parameter('serial_port', '/dev/ttyUSB0')
+        self.declare_parameter('serial_port', '/dev/ldlidar')
         self.declare_parameter('baudrate', 230400)
         self.declare_parameter('frame_id', 'laser')
         self.declare_parameter('publish_rate', 10.0)

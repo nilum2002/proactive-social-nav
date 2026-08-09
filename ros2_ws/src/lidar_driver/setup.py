@@ -16,10 +16,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='tharaka',
-    maintainer_email='tharaka@todo.todo',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    maintainer='Nilum Mudaliarachchi',
+    maintainer_email='Nilum@todo.todo',
+    description='Lidar Driver',
+    license='None',
     extras_require={
         'test': [
             'pytest',
