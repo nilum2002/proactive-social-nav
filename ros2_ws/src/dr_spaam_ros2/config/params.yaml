@@ -1,0 +1,41 @@
+dr_spaam_ros2_node:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.9
+    stride: 1
+    panoramic_scan: true
+    scan_topic: "/scan"
+    gpu: true
+    scan_fov_deg: 270.0
+    max_range: 12.0
+
+dr_spaam_ros2_node_debug:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.4
+    stride: 1
+    panoramic_scan: true
+    scan_topic: "/scan"
+    gpu: true
+    use_sim_time: false
+    log_every_n_scans: 10
+    raw_score_floor: 0.05
+
+dr_spaam_tracker_node:
+  ros__parameters:
+    detections_topic: "/dr_spaam_ros2_node/detections"
+    tracks_topic: "~/tracks"
+    markers_topic: "~/markers"
+    association_threshold: 1.0
+    max_lost_frames: 10
+    std_a_x: 1.5
+    std_a_y: 1.5
+    r_laser: 2.0
+    prediction_horizon: 2.0
+    confirm_frames: 8 
+    static_speed_threshold:  0.01
+    static_frames_required: 5
+    lidar_radius_m: 2.0  
+    tf_timeout_s: 0.0

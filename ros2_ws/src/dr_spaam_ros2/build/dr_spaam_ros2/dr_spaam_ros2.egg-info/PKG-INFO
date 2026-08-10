@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: dr_spaam_ros2
+Version: 1.2.0
+Summary: ROS2 wrapper package for 2D LiDAR person detection using DROW3 and DR-SPAAM
+Maintainer: Dan Jia
+Maintainer-email: jia@vision.rwth-aachen.de
+License: BSD-3-Clause
+Requires-Dist: setuptools
