@@ -4,15 +4,18 @@ import math
 import os
 import sys
 import threading
+import time
 from concurrent import futures
 
 import numpy as np
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
-from geometry_msgs.msg import Point, Pose, PoseArray, Vector3
+from geometry_msgs.msg import Point, Pose, PoseArray, TransformStamped, Vector3
+from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import ColorRGBA
+from tf2_ros import TransformBroadcaster
 
 import grpc
 
@@ -57,6 +60,7 @@ class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
                     o = frame.odom
                     yaw = 2.0 * math.atan2(o.qz, o.qw)
                     latest_odom = (o.x, o.y, yaw)
+                    self._node.broadcast_odom_tf(o.x, o.y, yaw, o.timestamp)
                     continue
                 if kind != "scan":
                     continue
@@ -69,6 +73,7 @@ class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
                         dt = candidate
                 last_scan_time = scan_pb.timestamp
 
+                self._node.republish_scan(scan_pb)
                 self._node.process_scan(scan_pb, latest_odom, tracker, dt)
                 scans_processed += 1
         finally:
@@ -111,6 +116,12 @@ class InfServerNode(Node):
         # ── ROS republish parameters ────────────────────────────────────────
         self.declare_parameter("track_poses_topic", "~/track_poses")
         self.declare_parameter("markers_topic", "~/markers")
+        self.declare_parameter("scan_topic", "~/scan")
+        # Must match the base_link->laser static transform published alongside
+        # this node (see inf_server.launch.py) -- that's the robot's physical
+        # mount offset, which this server has no other way to learn since it
+        # never receives the robot's own TF, only raw sensor data over gRPC.
+        self.declare_parameter("laser_frame_id", "laser")
 
         gp = self.get_parameter
         self.weight_file = gp("weight_file").get_parameter_value().string_value
@@ -138,6 +149,8 @@ class InfServerNode(Node):
 
         self.track_poses_topic = gp("track_poses_topic").get_parameter_value().string_value
         self.markers_topic = gp("markers_topic").get_parameter_value().string_value
+        self.scan_topic = gp("scan_topic").get_parameter_value().string_value
+        self.laser_frame_id = gp("laser_frame_id").get_parameter_value().string_value
 
         if not self.weight_file:
             self.get_logger().error("Parameter 'weight_file' is empty! Provide a path to a valid checkpoint.")
@@ -158,9 +171,15 @@ class InfServerNode(Node):
 
         self._track_poses_pub = self.create_publisher(PoseArray, self.track_poses_topic, 10)
         self._markers_pub = self.create_publisher(MarkerArray, self.markers_topic, 10)
+        self._scan_pub = self.create_publisher(LaserScan, self.scan_topic, 10)
+        self._tf_broadcaster = TransformBroadcaster(self)
 
         self._scan_count = 0
         self._scans_since_log = 0
+        # EMA of the DR-SPAAM forward-pass wall time itself (not the whole
+        # pipeline) -- this is what "FPS" means for the model specifically,
+        # decoupled from any gRPC/queueing time around it.
+        self._inference_time_ema_s = None
 
         self._servicer = PerceptionServicer(self)
         max_bytes = self.max_message_mb * 1024 * 1024
@@ -191,8 +210,51 @@ class InfServerNode(Node):
             f"  Max message  : {self.max_message_mb} MiB\n"
             f"  Expects the robot to forward its /scan and /odom topics as an\n"
             f"  interleaved SensorFrame stream (client-streaming, no reply per frame);\n"
-            f"  tracks are published locally to {self.track_poses_topic} / {self.markers_topic}."
+            f"  tracks are published locally to {self.track_poses_topic} / {self.markers_topic},\n"
+            f"  raw scan to {self.scan_topic}, and odom->base_link is broadcast on /tf."
         )
+
+    def broadcast_odom_tf(self, x, y, yaw, timestamp):
+        """Publish odom->base_link using odometry received over gRPC, so this
+        server has a real TF chain of its own instead of depending on the
+        robot's (unavailable, over-the-network) /tf."""
+        t = TransformStamped()
+        sec = int(timestamp)
+        nanosec = int(round((timestamp - sec) * 1e9))
+        if nanosec >= 1_000_000_000:
+            sec += 1
+            nanosec -= 1_000_000_000
+        t.header.stamp.sec = sec
+        t.header.stamp.nanosec = nanosec
+        t.header.frame_id = "odom"
+        t.child_frame_id = "base_link"
+        t.transform.translation.x = x
+        t.transform.translation.y = y
+        half = yaw / 2.0
+        t.transform.rotation.z = math.sin(half)
+        t.transform.rotation.w = math.cos(half)
+        self._tf_broadcaster.sendTransform(t)
+
+    def republish_scan(self, scan_pb):
+        """Re-emit the scan received over gRPC as a real sensor_msgs/LaserScan,
+        so it's visible in RViz2 without any dependency on the robot's own
+        ROS graph being reachable."""
+        msg = LaserScan()
+        sec = int(scan_pb.timestamp)
+        nanosec = int(round((scan_pb.timestamp - sec) * 1e9))
+        if nanosec >= 1_000_000_000:
+            sec += 1
+            nanosec -= 1_000_000_000
+        msg.header.stamp.sec = sec
+        msg.header.stamp.nanosec = nanosec
+        msg.header.frame_id = self.laser_frame_id
+        msg.angle_min = scan_pb.angle_min
+        msg.angle_max = scan_pb.angle_max
+        msg.angle_increment = scan_pb.angle_increment
+        msg.range_min = scan_pb.range_min
+        msg.range_max = scan_pb.range_max
+        msg.ranges = list(scan_pb.ranges)
+        self._scan_pub.publish(msg)
 
     def process_scan(self, scan_pb, latest_odom, tracker, dt):
         """Run detection + tracking for one scan. Called from a gRPC pool thread."""
@@ -220,9 +282,25 @@ class InfServerNode(Node):
 
         scan_phi = scan_pb.angle_min + np.arange(len(scan_pb.ranges)) * scan_pb.angle_increment
 
+        t0 = time.perf_counter()
         dets_xy, dets_cls, _ = self._detector(scan, scan_phi=scan_phi)
+        self._record_inference_time(time.perf_counter() - t0)
+
         conf_mask = (dets_cls >= self.conf_thresh).reshape(-1)
         return dets_xy[conf_mask]
+
+    def _record_inference_time(self, elapsed_s):
+        alpha = 0.1
+        if self._inference_time_ema_s is None:
+            self._inference_time_ema_s = elapsed_s
+        else:
+            self._inference_time_ema_s = alpha * elapsed_s + (1.0 - alpha) * self._inference_time_ema_s
+
+    @property
+    def inference_fps(self):
+        if not self._inference_time_ema_s:
+            return 0.0
+        return 1.0 / self._inference_time_ema_s
 
     def _to_tracking_frame(self, dets_xy, latest_odom):
         """Compensate for robot motion by projecting detections into the odom
@@ -293,7 +371,8 @@ class InfServerNode(Node):
         self._scans_since_log = 0
         self.get_logger().info(
             f"[inf_server] {self._servicer.client_count} client(s) | "
-            f"{rate:.1f} scans/s | {self._scan_count} total"
+            f"{rate:.1f} scans/s (pipeline) | {self.inference_fps:.1f} FPS (DR-SPAAM) | "
+            f"{self._scan_count} total"
         )
 
     def shutdown(self):

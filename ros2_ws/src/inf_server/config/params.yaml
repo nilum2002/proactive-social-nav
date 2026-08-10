@@ -23,3 +23,5 @@ inf_server_node:
 
     track_poses_topic: "~/track_poses"
     markers_topic: "~/markers"
+    scan_topic: "~/scan"
+    laser_frame_id: "laser"   # must match the base_link->laser static TF in the launch file

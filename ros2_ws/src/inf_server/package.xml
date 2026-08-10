@@ -5,16 +5,18 @@
   <version>0.1.0</version>
   <description>
     gRPC inference server: the robot streams its /scan and /odom topics in, this
-    node runs DR-SPAAM detection and Kalman-filter tracking, and streams tracked
-    pedestrian state back over the same connection.
+    node runs DR-SPAAM detection and Kalman-filter tracking, and republishes the
+    scan, tracks, and an odom->base_link TF locally for RViz2.
   </description>
   <maintainer email="sachithyanilum@gmail.com">nilum</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>tf2_ros</depend>
   <exec_depend>python3-grpcio</exec_depend>
   <exec_depend>python3-protobuf</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
