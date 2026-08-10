@@ -1,0 +1,61 @@
+// Perception stream: Robot -> inf_server
+//
+// Must stay byte-identical to inf_server's copy of this file — both sides
+// generate their stubs from it independently, so a drift here is a silent
+// wire-format mismatch rather than a build error.
+//
+// Direction: the ROBOT is the client. It dials into inf_server and pushes its
+// /scan and /odom topics as an interleaved stream of SensorFrame messages. The
+// server runs DR-SPAAM detection and Kalman tracking; results only go to the
+// server's own ROS topics for now, so this is a plain client-streaming call (no
+// per-frame reply, no track data sent back).
+//
+// Regenerate with (venv active, from the package root):
+//   python -m grpc_tools.protoc -I proto --python_out=inf_client \
+//       --grpc_python_out=inf_client proto/perception_stream.proto
+
+syntax = "proto3";
+
+package perception;
+
+message LaserScanData {
+  double timestamp = 1;       // seconds; from the source LaserScan header stamp
+  float angle_min = 2;        // rad
+  float angle_max = 3;        // rad
+  float angle_increment = 4;  // rad between consecutive samples
+  float range_min = 5;        // m
+  float range_max = 6;        // m
+  repeated float ranges = 7;  // m; may contain NaN/inf for no-return beams
+}
+
+// (nav_msgs/Odometry + tf odom->base_link), same shape as lidar_grpc_bridge's
+// odom_stream.proto so both directions agree on what "odometry" means on the wire.
+message OdometryData {
+  double timestamp = 1;  // seconds
+  double x = 2;          // m, odom frame
+  double y = 3;          // m, odom frame
+  double qz = 4;         // orientation quaternion z (planar yaw only)
+  double qw = 5;         // orientation quaternion w
+  double vx = 6;         // m/s, base_link-frame forward velocity
+  double vtheta = 7;     // rad/s, yaw rate
+}
+
+// One entry per /scan or /odom message the robot forwards, in publish order.
+message SensorFrame {
+  oneof payload {
+    LaserScanData scan = 1;
+    OdometryData odom = 2;
+  }
+}
+
+message SensorAck {
+  int32 scans_processed = 1;
+}
+
+service PerceptionService {
+  // Client-streaming: the robot streams SensorFrame (scan/odom, interleaved) in
+  // for as long as it keeps the call open; the single SensorAck reply only comes
+  // back once the robot closes the stream. Tracks are not sent back on this call
+  // — they're only republished on inf_server's own ROS topics for now.
+  rpc StreamSensorData(stream SensorFrame) returns (SensorAck);
+}

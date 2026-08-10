@@ -1,0 +1,9 @@
+inf_client_node:
+  ros__parameters:
+    server_address: "192.168.1.200:50053"   # host:port of the inf_server machine
+    scan_topic: "/scan"
+    odom_topic: "/odom"
+    max_message_mb: 10
+    queue_size: 20
+    reconnect_delay_s: 2.0
+    status_log_period_s: 5.0
