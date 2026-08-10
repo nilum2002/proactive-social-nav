@@ -304,6 +304,24 @@ class KobukiDriver:
             last_send = now
             time.sleep(self.cmd_period)
 
+    def stop(self):
+        """
+        Halt the robot and shut the command thread down.
+
+        The zero command goes straight out rather than through set_velocity():
+        the command loop sleeps up to cmd_period between sends, so a queued stop
+        can be missed entirely if the thread is told to exit in the same breath,
+        leaving the base coasting until its own watchdog trips.
+        """
+        with self._cmd_lock:
+            self._cmd_linear = 0.0
+            self._cmd_angular = 0.0
+        try:
+            self._send_drive_cmd(0, 0.0)
+        except Exception:
+            pass
+        self.running = False
+
     def drive(self, linear_vel, angular_vel):
         """
         Deprecated: Use set_velocity() instead.

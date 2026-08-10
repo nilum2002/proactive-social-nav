@@ -131,16 +131,21 @@ class KobukiRosNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = KobukiRosNode()
+    node = None
     try:
+        node = KobukiRosNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.get_logger().info('Shutting down Kobuki node')
-        node.driver.set_velocity(0, 0)
-        node.driver.running = False
-        rclpy.shutdown()
+        # Ctrl-C has already invalidated the context by the time we get here, so
+        # logging through the node fails and rclpy.shutdown() raises for being
+        # called twice.  Stop the hardware first, then tear down what is left.
+        if node is not None:
+            node.driver.stop()
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

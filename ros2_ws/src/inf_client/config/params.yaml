@@ -1,6 +1,6 @@
 inf_client_node:
   ros__parameters:
-    server_address: "192.168.1.100:50053"   # host:port of the inf_server machine
+    server_address: "192.168.0.100:50053"   # host:port of the inf_server machine
     scan_topic: "/scan"
     odom_topic: "/odom"
     max_message_mb: 10

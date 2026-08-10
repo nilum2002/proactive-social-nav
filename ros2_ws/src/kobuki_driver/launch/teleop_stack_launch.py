@@ -23,7 +23,10 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'lidar_port',
-            default_value='/dev/lidar',
+            # /dev/lidar does not exist; the udev rule creates /dev/ldlidar.
+            # With the wrong path the driver throws on open and /scan is never
+            # published, which downstream looks like "inf_client sends 0 frames".
+            default_value='/dev/ldlidar',
             description='Serial port for LiDAR',
         ),
         DeclareLaunchArgument(
