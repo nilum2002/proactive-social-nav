@@ -116,6 +116,7 @@ class InfServerNode(Node):
         # ── ROS republish parameters ────────────────────────────────────────
         self.declare_parameter("track_poses_topic", "~/track_poses")
         self.declare_parameter("markers_topic", "~/markers")
+        self.declare_parameter("detections_marker_topic", "~/detection_markers")
         self.declare_parameter("scan_topic", "~/scan")
         # Must match the base_link->laser static transform published alongside
         # this node (see inf_server.launch.py) -- that's the robot's physical
@@ -149,6 +150,7 @@ class InfServerNode(Node):
 
         self.track_poses_topic = gp("track_poses_topic").get_parameter_value().string_value
         self.markers_topic = gp("markers_topic").get_parameter_value().string_value
+        self.detections_marker_topic = gp("detections_marker_topic").get_parameter_value().string_value
         self.scan_topic = gp("scan_topic").get_parameter_value().string_value
         self.laser_frame_id = gp("laser_frame_id").get_parameter_value().string_value
 
@@ -171,6 +173,7 @@ class InfServerNode(Node):
 
         self._track_poses_pub = self.create_publisher(PoseArray, self.track_poses_topic, 10)
         self._markers_pub = self.create_publisher(MarkerArray, self.markers_topic, 10)
+        self._detections_marker_pub = self.create_publisher(Marker, self.detections_marker_topic, 10)
         self._scan_pub = self.create_publisher(LaserScan, self.scan_topic, 10)
         self._tf_broadcaster = TransformBroadcaster(self)
 
@@ -263,6 +266,7 @@ class InfServerNode(Node):
             dets_xy, frame_id = self._to_tracking_frame(dets_xy, latest_odom)
             active_tracks = tracker.step(dt, dets_xy)
 
+        self._publish_detections_marker(dets_xy, frame_id)
         self._publish_ros(frame_id, active_tracks)
 
         self._scan_count += 1
@@ -315,6 +319,33 @@ class InfServerNode(Node):
             for x, y in dets_xy
         ]
         return transformed, "odom"
+
+    def _publish_detections_marker(self, dets_xy, frame_id):
+        """Red circle per raw DR-SPAAM detection, published every scan before
+        Kalman confirmation -- same LINE_LIST-circle style as the original
+        dr_spaam_ros2_node's rviz_marker, so a person shows up here the instant
+        DR-SPAAM sees them, before the tracker has confirmed a stable track."""
+        msg = Marker()
+        msg.header.frame_id = frame_id
+        msg.action = Marker.ADD
+        msg.ns = "dr_spaam_detections"
+        msg.id = 0
+        msg.type = Marker.LINE_LIST
+        msg.pose.orientation.w = 1.0
+        msg.scale.x = 0.03
+        msg.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)
+        msg.lifetime = Duration(seconds=0.5).to_msg()
+
+        radius = 0.4
+        angles = np.linspace(0, 2 * np.pi, 20)
+        offsets = radius * np.stack((np.cos(angles), np.sin(angles)), axis=1)
+
+        for x, y in dets_xy:
+            for i in range(len(offsets) - 1):
+                msg.points.append(Point(x=x + offsets[i, 0], y=y + offsets[i, 1], z=0.05))
+                msg.points.append(Point(x=x + offsets[i + 1, 0], y=y + offsets[i + 1, 1], z=0.05))
+
+        self._detections_marker_pub.publish(msg)
 
     def _publish_ros(self, frame_id, active_tracks):
         poses = PoseArray()

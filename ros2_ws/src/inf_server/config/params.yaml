@@ -15,13 +15,14 @@ inf_server_node:
 
     association_threshold: 1.0
     max_lost_frames: 10
-    std_a_x: 1.5
-    std_a_y: 1.5
+    std_a_x: 0.9
+    std_a_y: 0.9
     r_laser: 0.2
-    static_speed_threshold: 0.15
+    static_speed_threshold: 0.01
     static_frames_required: 15
 
     track_poses_topic: "~/track_poses"
     markers_topic: "~/markers"
+    detections_marker_topic: "~/detection_markers"
     scan_topic: "~/scan"
     laser_frame_id: "laser"   # must match the base_link->laser static TF in the launch file
