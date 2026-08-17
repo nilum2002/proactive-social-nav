@@ -30,6 +30,7 @@ setup(
     entry_points={
         'console_scripts': [
             'grpc_server_node = inf_server.grpc_server_node:main',
+            'grpc_pipelined_node = inf_server.grpc_pipelined_node:main',
         ],
     },
 )
