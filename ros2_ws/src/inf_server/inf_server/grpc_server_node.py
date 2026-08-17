@@ -1,5 +1,3 @@
-"""inf_server: gRPC inference server for pedestrian detection + tracking.
-"""
 import math
 import os
 import sys
@@ -18,7 +16,6 @@ from std_msgs.msg import ColorRGBA
 from tf2_ros import TransformBroadcaster
 
 import grpc
-
 from dr_spaam.detector import Detector
 from inf_server.kalman_tracker import MultiObjectTracker
 
@@ -86,8 +83,8 @@ class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
 
 class InfServerNode(Node):
 
-    def __init__(self):
-        super().__init__("inf_server_node")
+    def __init__(self, node_name="inf_server_node"):
+        super().__init__(node_name)
 
         # ── Detector parameters ─────────────────────────────────────────────
         self.declare_parameter("weight_file", "")
@@ -118,10 +115,6 @@ class InfServerNode(Node):
         self.declare_parameter("markers_topic", "~/markers")
         self.declare_parameter("detections_marker_topic", "~/detection_markers")
         self.declare_parameter("scan_topic", "~/scan")
-        # Must match the base_link->laser static transform published alongside
-        # this node (see inf_server.launch.py) -- that's the robot's physical
-        # mount offset, which this server has no other way to learn since it
-        # never receives the robot's own TF, only raw sensor data over gRPC.
         self.declare_parameter("laser_frame_id", "laser")
 
         gp = self.get_parameter
@@ -137,7 +130,6 @@ class InfServerNode(Node):
         self.max_clients = gp("max_clients").get_parameter_value().integer_value
         self.max_message_mb = gp("max_message_mb").get_parameter_value().integer_value
         self.status_log_period_s = gp("status_log_period_s").get_parameter_value().double_value
-
         self.tracker_kwargs = dict(
             association_threshold=gp("association_threshold").get_parameter_value().double_value,
             max_lost_frames=gp("max_lost_frames").get_parameter_value().integer_value,
@@ -166,9 +158,6 @@ class InfServerNode(Node):
             stride=self.stride,
             panoramic_scan=self.panoramic_scan,
         )
-        # Detector.__call__ mutates internal scan-angle state, and a shared
-        # MultiObjectTracker per call would race the same way, so scan processing
-        # for one connection at a time is serialized here.
         self._process_lock = threading.Lock()
 
         self._track_poses_pub = self.create_publisher(PoseArray, self.track_poses_topic, 10)
@@ -179,12 +168,10 @@ class InfServerNode(Node):
 
         self._scan_count = 0
         self._scans_since_log = 0
-        # EMA of the DR-SPAAM forward-pass wall time itself (not the whole
-        # pipeline) -- this is what "FPS" means for the model specifically,
-        # decoupled from any gRPC/queueing time around it.
         self._inference_time_ema_s = None
 
-        self._servicer = PerceptionServicer(self)
+        self._servicer = self._make_servicer()
+
         max_bytes = self.max_message_mb * 1024 * 1024
         self._server = grpc.server(
             futures.ThreadPoolExecutor(max_workers=self.max_clients + 2),
@@ -216,6 +203,9 @@ class InfServerNode(Node):
             f"  tracks are published locally to {self.track_poses_topic} / {self.markers_topic},\n"
             f"  raw scan to {self.scan_topic}, and odom->base_link is broadcast on /tf."
         )
+
+    def _make_servicer(self):
+        return PerceptionServicer(self)
 
     def broadcast_odom_tf(self, x, y, yaw, timestamp):
         """Publish odom->base_link using odometry received over gRPC, so this
@@ -409,7 +399,6 @@ class InfServerNode(Node):
     def shutdown(self):
         self.get_logger().info("Stopping gRPC server...")
         self._server.stop(grace=1.0).wait()
-
 
 def main(args=None):
     rclpy.init(args=args)

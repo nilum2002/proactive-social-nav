@@ -1,10 +1,3 @@
-"""Multi-pedestrian Kalman tracking, decoupled from ROS and gRPC.
-
-Ported from dr_spaam_ros2's dr_spaam_tracker_node: same constant-velocity KF,
-Hungarian (or greedy) association, and static-object blacklist, but driven by
-direct step(dt, detections) calls instead of a topic subscription so it can run
-inside the gRPC servicer thread.
-"""
 import time
 
 import numpy as np
@@ -119,8 +112,7 @@ class Track:
         self.kf.update(position)
         self.lost_count = 0
         self.age += 1
-        # Require consecutive matches before publishing: filters spurious 1-3 frame
-        # DR-SPAAM blips from walls/glass rather than a real, persistent person.
+        
         if self.state == "TENTATIVE" and self.age >= 5:
             self.state = "ACTIVE"
 
