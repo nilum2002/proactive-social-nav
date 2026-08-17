@@ -1,0 +1,31 @@
+inf_server_pipelined_node:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.8
+    stride: 1
+    panoramic_scan: true
+    gpu: true
+
+    bind_address: "0.0.0.0"
+    # 50054
+    port: 50054
+    max_clients: 4
+    max_message_mb: 10
+    status_log_period_s: 5.0
+    queue_size: 5
+
+    association_threshold: 1.0
+    max_lost_frames: 10
+    std_a_x: 2.0
+    std_a_y: 2.0
+    r_laser: 0.2
+    static_speed_threshold: 0.01
+    static_frames_required: 15
+
+    track_poses_topic: "~/track_poses"
+    markers_topic: "~/markers"
+    detections_marker_topic: "~/detection_markers"
+    scan_topic: "~/scan"
+    laser_frame_id: "laser"
+    service_log_file: "/inf_server_service_log_pipelined.csv"

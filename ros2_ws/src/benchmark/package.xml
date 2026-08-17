@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>benchmark</name>
+  <version>0.1.0</version>
+  <description>
+    Instrumented variant of inf_server: the same gRPC inference server (DR-SPAAM
+    detection + Kalman-filter tracking over a streamed /scan and /odom), plus
+    per-stage latency, CPU/RAM and GPU sampling written out as CSV reports.
+    Kept as a separate package so inf_server itself stays free of profiling
+    dependencies.
+  </description>
+  <maintainer email="sachithyanilum@gmail.com">nilum</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2_ros</depend>
+  <exec_depend>python3-grpcio</exec_depend>
+  <exec_depend>python3-protobuf</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-psutil</exec_depend>
+  <exec_depend>python3-pandas</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

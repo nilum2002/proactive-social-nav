@@ -1,3 +1,5 @@
+import time
+
 import torch
 import numpy as np
 
@@ -25,6 +27,12 @@ class Detector(object):
 
         self._scan_phi = None
         self._laser_fov_deg = None
+
+        # Duration of the last network forward pass alone, in seconds -- the
+        # cutout preprocessing and the NMS postprocessing around it are excluded,
+        # so this is strictly smaller than the wall time of __call__. Set on
+        # every call; None until the first one.
+        self.last_predict_s = None
 
         if model == "DROW3":
             self._model = DrowNet(
@@ -86,12 +94,22 @@ class Detector(object):
             ct = ct.cuda()
 
         # inference
+        # CUDA launches are asynchronous, so the forward pass is bracketed by
+        # explicit syncs to time it rather than the enqueue: the first drains the
+        # host->device copy above, the second waits for the kernels to retire.
+        # Without them the cost would silently land on the .cpu() call below.
+        if self._gpu:
+            torch.cuda.synchronize()
+        predict_t0 = time.perf_counter()
         with torch.no_grad():
             # one extra dimension for batch
             if self._use_dr_spaam:
                 pred_cls, pred_reg, _ = self._model(ct.unsqueeze(dim=0), inference=True)
             else:
                 pred_cls, pred_reg = self._model(ct.unsqueeze(dim=0))
+        if self._gpu:
+            torch.cuda.synchronize()
+        self.last_predict_s = time.perf_counter() - predict_t0
 
         pred_cls = torch.sigmoid(pred_cls[0]).data.cpu().numpy()
         pred_reg = pred_reg[0].data.cpu().numpy()
