@@ -1,0 +1,44 @@
+norfair_inf_server_node:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.8
+    stride: 1
+    panoramic_scan: true
+    gpu: true
+
+    bind_address: "0.0.0.0"
+    port: 50053
+    max_clients: 4
+    max_message_mb: 10
+    status_log_period_s: 5.0
+
+    association_threshold: 1.0
+    max_lost_frames: 10
+    std_a_x: 0.9
+    std_a_y: 0.9
+    r_laser: 0.2
+    static_speed_threshold: 0.01
+    static_frames_required: 15
+
+    track_poses_topic: "~/track_poses"
+    markers_topic: "~/markers"
+    detections_marker_topic: "~/detection_markers"
+    scan_topic: "~/scan"
+    laser_frame_id: "laser"   # must match the base_link->laser static TF in the launch file
+    service_log_file: "/norfair_service_log_seq.csv"
+    # ── Norfair counter-based track initiation / deletion ────────────────────
+    # A candidate track is created from every unmatched detection but is only
+    # properly initiated once its counter passes c_init; an established track is
+    # dropped after c_del updates with no match. The counter moves +1 per match
+    # and -1 per miss.
+    #
+    # c_init is the initiation-latency knob: ~c_init / scan_rate seconds from a
+    # person first becoming detectable to their track existing. Lower reacts
+    # sooner but admits more false tracks -- which is why conf_thresh is kept
+    # high (>= 0.8) rather than lowering it to compensate.
+    c_init: 10
+    c_del: 15
+    # Expected scan period. Only used to turn an unusually long gap into
+    # norfair's integer `period` so a dropped scan ages the counters correctly.
+    nominal_dt: 0.1

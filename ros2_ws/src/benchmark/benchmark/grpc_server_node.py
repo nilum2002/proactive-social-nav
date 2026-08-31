@@ -226,7 +226,7 @@ class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
             self._client_count += 1
         self._logger.info(f"robot connected: {peer} (now {self.client_count} client(s))")
 
-        tracker = MultiObjectTracker(**self._node.tracker_kwargs)
+        tracker = self._node.make_tracker()
         latest_odom = None   # (x, y, yaw)
         last_scan_time = None
         scans_processed = 0
@@ -408,7 +408,7 @@ class InfServerNode(Node):
         self.get_logger().info(
             f"\n"
             f"  ╔══════════════════════════════════════════╗\n"
-            f"  ║     inf_server: DR-SPAAM + KF Tracker    ║\n"
+            f"  ║{('inf_server: DR-SPAAM + ' + self.tracker_name).center(42)}║\n"
             f"  ╚══════════════════════════════════════════╝\n"
             f"  Serving on   : {bind_target}  (PerceptionService/StreamSensorData)\n"
             f"  Max clients  : {self.max_clients}\n"
@@ -419,8 +419,16 @@ class InfServerNode(Node):
             f"  raw scan to {self.scan_topic}, and odom->base_link is broadcast on /tf."
         )
 
+    # Shown in the startup banner; overridden by the Norfair variants.
+    tracker_name = "KF Tracker"
+
     def _make_servicer(self):
         return PerceptionServicer(self)
+
+    def make_tracker(self):
+        """One tracker per connection. Overridden by the Norfair variants to
+        swap the tracking backend without touching the servicers."""
+        return MultiObjectTracker(**self.tracker_kwargs)
 
     def broadcast_odom_tf(self, x, y, yaw, timestamp):
         """Publish odom->base_link using odometry received over gRPC, so this
@@ -519,8 +527,17 @@ class InfServerNode(Node):
 
     def _to_tracking_frame(self, dets_xy, latest_odom):
         """Compensate for robot motion by projecting detections into the odom
-        frame using the latest odometry; otherwise track in the raw laser frame."""
-        if latest_odom is None or len(dets_xy) == 0:
+        frame using the latest odometry; otherwise track in the raw laser frame.
+
+        The frame depends only on whether odometry is available -- never on how
+        many detections this scan happened to produce. Returning "base_link" for
+        an empty scan (as this used to) mislabels the frame while tracks are
+        coasting: the tracks themselves are still in odom coordinates, so RViz
+        re-anchors them to base_link and they appear glued to the robot for as
+        long as the detector misses. With sparse detections at a high
+        conf_thresh that is most frames, and the tracks visibly drag along.
+        """
+        if latest_odom is None:
             return [(float(x), float(y)) for x, y in dets_xy], "base_link"
 
         ox, oy, oyaw = latest_odom

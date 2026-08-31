@@ -1,0 +1,89 @@
+# Offline CLEAR-MOT benchmark for DR-SPAAM + Kalman tracker on the FROG dataset.
+# Paths are relative to the repository root.
+
+paths:
+  repo_root:    ".."            # config.yaml sits in mot_benchmark/
+  circles_dir:  "frog-raw-circles/circles"      # raw labelling-tool CSVs (carry `idp`)
+  h5:           "frog_dataset/frog_16-41_test.h5"
+  odom:         "frog_dataset/frog_16-41_odom.npz"
+  out_dir:      "mot_benchmark/out"
+  bag:          "16-41"                          # which sequence the CSVs/h5 belong to
+
+# FROG sensor geometry. Taken from the official loader
+# (2DLaserPeopleBenchmark/utils/data_loader.py): 720 pts over 180 deg,
+# `endpoint=False` in the linspace, 0.2..10.0 m valid range.
+frog:
+  num_pts:    720
+  fov_deg:    180.0
+  range_min:  0.2
+  range_max:  10.0
+  person_r:   0.4
+
+detector:
+  weight_file:    "frog_dataset/dr_spaam_5_on_frog.pth"
+  model:          "DR-SPAAM"
+  gpu:            true
+  stride:         1
+  # MUST be false for FROG -- it is a 180 deg scanner. The authors' own
+  # drspaam-frog-support.patch sets panoramic_scan: False.
+  panoramic_scan: false
+  # Swept, not fixed: the deployed 0.8 trades away almost all recall, which
+  # would show up as a huge miss count rather than as a tracker property.
+  conf_thresholds: [0.8]
+
+  # Temporal-memory ablation.
+  #
+  # DR-SPAAM is stateful: alpha=0.5 auto-regressive memory, so the scan k back
+  # carries weight 0.5^(k+1) and the last 5 scans are ~97% of it. That decay is
+  # hardcoded in dr_spaam/dr_spaam/detector.py and is NOT reachable from here.
+  #
+  # Two ways to vary the temporal behaviour without touching that file:
+  #
+  #  1. reset_every_scan: true -- clears the memory before every scan, so the
+  #     same weights run memoryless. This is the clean ablation: it isolates
+  #     the memory while holding the network fixed.
+  #  2. swap weight_file / model below. This also changes the weights, so it
+  #     compares three separately-trained models rather than one dial:
+  #        dr_spaam_5_on_frog.pth  DR-SPAAM  trained on 5-scan seqs  AP 74.2
+  #        dr_spaam_1_on_frog.pth  DR-SPAAM  trained on single scans AP 72.2
+  #        drow_on_frog.pth        DROW3     no memory in the model  AP 72.3
+  #     (AP at ad=0.5 from the FROG leaderboard.) DROW3 is the true memoryless
+  #     baseline -- DrowNet has no gate and no _memory at all.
+  reset_every_scan: false
+
+# Mirrors the ROS parameters in ros2_ws/src/benchmark/config/params.yaml so the
+# offline run tracks with the same settings as the deployed node.
+tracker:
+  # kf      -> benchmark.kalman_tracker.MultiObjectTracker (the hand-written KF)
+  # norfair -> benchmark.norfair_tracker.NorfairMultiObjectTracker
+  # Keys below are filtered by the chosen backend's signature, so both sets can
+  # live here together without either constructor seeing arguments it rejects.
+  backend:                 kf
+
+  association_threshold:   1.0
+  max_lost_frames:         10
+  std_a_x:                 1.5
+  std_a_y:                 1.5
+  r_laser:                 0.2
+  static_speed_threshold:  0.15
+  static_frames_required:  15
+
+  # -- norfair only -------------------------------------------------------
+  # Counter-based initiation / deletion: +1 per match, -1 per miss.
+  # c_init updates to initiate a track, c_del updates without a match to drop
+  # one. Initiation latency is c_init / scan_rate; at FROG's 40 Hz, c_init=3 is
+  # 75 ms. Must satisfy 0 <= c_init < c_del.
+  c_init:                  3
+  c_del:                   10
+  # FROG runs at 40 Hz -- 0.025 s, NOT the 0.1 the ROS params assume for the
+  # 10 Hz LiDAR. Only used to convert a long gap into norfair's integer period.
+  nominal_dt:              0.025
+
+pipeline:
+  # Bounded queue depth for the pipelined variant, matching the ROS node's
+  # `queue_size` parameter.
+  queue_size: 5
+
+scoring:
+  # FROG's own operating points (leaderboard reports ad = 0.5 and 0.3 m).
+  association_distances: [0.5, 0.3]

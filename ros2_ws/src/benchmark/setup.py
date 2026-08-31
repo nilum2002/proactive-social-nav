@@ -31,6 +31,8 @@ setup(
         'console_scripts': [
             'grpc_server_node = benchmark.grpc_server_node:main',
             'grpc_pipelined_node = benchmark.grpc_pipelined_node:main',
+            'norfair_server_node = benchmark.norfair_server_node:main',
+            'norfair_pipelined_node = benchmark.norfair_pipelined_node:main',
         ],
     },
 )

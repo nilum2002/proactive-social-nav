@@ -1,12 +1,18 @@
 """Multi-pedestrian Kalman tracking, decoupled from ROS and gRPC.
 
 Ported from dr_spaam_ros2's dr_spaam_tracker_node: same constant-velocity KF,
-Hungarian (or greedy) association, and static-object blacklist, but driven by
-direct step(dt, detections) calls instead of a topic subscription so it can run
-inside the gRPC servicer thread.
-"""
-import time
+Hungarian (or greedy) association, but driven by direct step(dt, detections)
+calls instead of a topic subscription so it can run inside the gRPC servicer
+thread.
 
+Static tracks are classified (Track.is_static) but NOT suppressed: a person who
+stops walking keeps their track and their id. The upstream tracker dropped them
+and blacklisted their position, which is right for navigation -- a stationary
+person is not a moving obstacle -- but it makes CLEAR MOT meaningless, since
+every stationary ground-truth person becomes a run of misses and then an id
+switch when they move off again. Consumers that want the navigation behaviour
+should filter on `is_static` themselves.
+"""
 import numpy as np
 
 try:
@@ -173,7 +179,6 @@ class MultiObjectTracker:
         r_laser=0.2,
         static_speed_threshold=0.15,
         static_frames_required=15,
-        static_blacklist_ttl_s=5.0,
     ):
         self.association_threshold = association_threshold
         self.max_lost_frames = max_lost_frames
@@ -182,18 +187,15 @@ class MultiObjectTracker:
         self.r_laser = r_laser
         self.static_speed_threshold = static_speed_threshold
         self.static_frames_required = static_frames_required
-        self.static_blacklist_ttl_s = static_blacklist_ttl_s
 
         self.tracks = []
         self._next_track_id = 1
-        # [(x, y, expiry_monotonic_s), ...]: positions of removed static objects
-        # that must not immediately respawn a new track.
-        self._static_blacklist = []
 
     def step(self, dt, detections_xy):
         """Advance the tracker by dt using this frame's (x, y) detections.
 
-        Returns the list of currently ACTIVE (confirmed, non-static) Track objects.
+        Returns the list of currently ACTIVE (confirmed) Track objects, static
+        ones included -- see the module docstring.
         """
         for track in self.tracks:
             track.predict(dt)
@@ -207,27 +209,18 @@ class MultiObjectTracker:
             if t_idx not in matched_tracks:
                 track.lost_count += 1
 
-        now = time.monotonic()
-        self._static_blacklist = [e for e in self._static_blacklist if now < e[2]]
         for d_idx, det in enumerate(detections_xy):
             if d_idx in matched_dets:
                 continue
-            blacklisted = any(
-                np.hypot(det[0] - bx, det[1] - by) < self.association_threshold
-                for (bx, by, _) in self._static_blacklist
-            )
-            if not blacklisted:
-                self.tracks.append(Track(self._next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser))
-                self._next_track_id += 1
+            self.tracks.append(Track(self._next_track_id, det, self.std_a_x, self.std_a_y, self.r_laser))
+            self._next_track_id += 1
 
         active_tracks = []
         for track in self.tracks:
+            # Still classified every frame so `is_static` stays current for any
+            # consumer that wants it; it just no longer removes the track.
             track.check_static(self.static_speed_threshold, self.static_frames_required)
             if track.lost_count > self.max_lost_frames:
-                continue
-            if track.is_static:
-                expiry = now + self.static_blacklist_ttl_s
-                self._static_blacklist.append((track.position[0], track.position[1], expiry))
                 continue
             active_tracks.append(track)
         self.tracks = active_tracks

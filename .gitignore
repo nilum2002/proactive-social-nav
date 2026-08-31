@@ -15,3 +15,6 @@ dr_spaam_ros2/install/
 dr_spaam_ros2/log/
 venv/
 .vscode/
+
+# large dataset files (exceed GitHub's 100MB limit)
+*.h5

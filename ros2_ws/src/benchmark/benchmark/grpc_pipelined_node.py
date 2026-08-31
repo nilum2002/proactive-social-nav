@@ -11,7 +11,6 @@ from benchmark.grpc_server_node import (
     PerceptionServicer,
     perception_stream_pb2,
 )
-from benchmark.kalman_tracker import MultiObjectTracker
 
 # arrival_t / det_s are carried through so stage 2 can close out the latency
 # measurement at publish time, when the frame is actually finished.
@@ -80,7 +79,7 @@ class PipelinedPerceptionServicer(PerceptionServicer):
 
         # Per connection, matching the sequential node: one tracker, and now one
         # queue and one thread feeding it.
-        tracker = MultiObjectTracker(**node.tracker_kwargs)
+        tracker = node.make_tracker()
         work_q = queue.Queue(maxsize=node.queue_size)
         tracker_thread = threading.Thread(
             target=self._tracker_loop, args=(tracker, work_q), daemon=True
@@ -171,9 +170,9 @@ class PipelinedPerceptionServicer(PerceptionServicer):
 
 class PipelinedInfServerNode(InfServerNode):
 
-    def __init__(self):
+    def __init__(self, node_name="inf_server_pipelined_node"):
         self.stats = StageStats()
-        super().__init__(node_name="inf_server_pipelined_node")
+        super().__init__(node_name=node_name)
         self.get_logger().info(
             f"  Pipelined variant: detection (stage 1) and tracking (stage 2) run\n"
             f"  on separate threads, bounded queue of {self.queue_size}, single\n"
