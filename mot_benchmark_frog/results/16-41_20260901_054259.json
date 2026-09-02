@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-09-01T05:42:59.163602+00:00",
+  "bag": "16-41",
+  "cross_check": true,
+  "dumps_scored": [
+    "tracks_16-41_dr_spaam_5_on_frog_norfair_sequential_conf0.8.npz"
+  ],
+  "rows": [
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "norfair",
+      "pipeline": "sequential",
+      "conf": 0.8,
+      "ad": 0.5,
+      "mota": 0.41377761869122387,
+      "motp": 0.03745757110728564,
+      "fn": 71990,
+      "fp": 18075,
+      "idsw": 11,
+      "gt": 153655,
+      "xcheck_max_mota_delta": 9.076057360679624e-05
+    },
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "norfair",
+      "pipeline": "sequential",
+      "conf": 0.8,
+      "ad": 0.3,
+      "mota": 0.40417168331652076,
+      "motp": 0.03373745369579389,
+      "fn": 72730,
+      "fp": 18815,
+      "idsw": 7,
+      "gt": 153655,
+      "xcheck_max_mota_delta": 0.0010683760683760646
+    }
+  ],
+  "sequential_vs_pipelined_max_delta": null
+}

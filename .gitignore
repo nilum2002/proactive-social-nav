@@ -4,6 +4,7 @@ ros2_ws/install
 ros2_ws/log
 self_supervised_person_detection-20260705T040103Z-3-001/
 venv/
+.venv/
 __pycache__/
 *.py[cod]
 *.pyo
@@ -18,3 +19,14 @@ venv/
 
 # large dataset files (exceed GitHub's 100MB limit)
 *.h5
+dr_spaam/data/DROWv2-data/
+
+# downloaded model checkpoints (329MB) -- reproducible from the Google Drive
+# link, not meant to live in git history
+pretrained_weights/
+
+# scratch KITTI-format files consumed by evaluate_drow() and regenerated every
+# run -- thousands of tiny files, not worth tracking (the actual artifact is
+# the JSON summary in mot_benchmark_drowv2/results/ and frog_benchmark/results/)
+mot_benchmark_drowv2/out/ap_kitti/
+frog_benchmark/out/ap_kitti/

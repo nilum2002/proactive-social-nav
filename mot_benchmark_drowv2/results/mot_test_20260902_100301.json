@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-09-02T10:03:01.467959+00:00",
+  "split": "test",
+  "cross_check": true,
+  "dumps_scored": [
+    "drowv2_test_tracks_ckpt_jrdb_ann_ft_dr_spaam_e20_kf_pipelined_conf0.5.npz",
+    "drowv2_test_tracks_ckpt_jrdb_ann_ft_dr_spaam_e20_kf_sequential_conf0.5.npz"
+  ],
+  "rows": [
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "kf",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -3.841599190283401,
+      "motp": 0.13812469704910102,
+      "fn": 455,
+      "fp": 9096,
+      "idsw": 16,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "kf",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -3.659919028340081,
+      "motp": 0.16570523885478117,
+      "fn": 270,
+      "fp": 8911,
+      "idsw": 27,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -3.841599190283401,
+      "motp": 0.13812469704910102,
+      "fn": 455,
+      "fp": 9096,
+      "idsw": 16,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -3.659919028340081,
+      "motp": 0.16570523885478117,
+      "fn": 270,
+      "fp": 8911,
+      "idsw": 27,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    }
+  ],
+  "sequential_vs_pipelined_max_delta": 0.0,
+  "caveat": "pseudo ground truth (see pseudo_gt.py) -- IDSW is a linking-heuristic artifact, not verified identity; FN/FP are more trustworthy"
+}

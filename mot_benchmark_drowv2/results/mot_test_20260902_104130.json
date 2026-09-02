@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-09-02T10:41:30.858425+00:00",
+  "split": "test",
+  "cross_check": true,
+  "dumps_scored": [
+    "drowv2_test_tracks_ckpt_jrdb_ann_ft_dr_spaam_e20_norfair_pipelined_conf0.5.npz",
+    "drowv2_test_tracks_ckpt_jrdb_ann_ft_dr_spaam_e20_norfair_sequential_conf0.5.npz"
+  ],
+  "rows": [
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "norfair",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -3.1158906882591095,
+      "motp": 0.13384912969672985,
+      "fn": 424,
+      "fp": 7689,
+      "idsw": 20,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "norfair",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -2.963056680161943,
+      "motp": 0.15671130461528957,
+      "fn": 272,
+      "fp": 7537,
+      "idsw": 22,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "norfair",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -3.1158906882591095,
+      "motp": 0.13384912969672985,
+      "fn": 424,
+      "fp": 7689,
+      "idsw": 20,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "ckpt_jrdb_ann_ft_dr_spaam_e20",
+      "tracker": "norfair",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -2.963056680161943,
+      "motp": 0.15671130461528957,
+      "fn": 272,
+      "fp": 7537,
+      "idsw": 22,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    }
+  ],
+  "sequential_vs_pipelined_max_delta": 0.0,
+  "caveat": "pseudo ground truth (see pseudo_gt.py) -- IDSW is a linking-heuristic artifact, not verified identity; FN/FP are more trustworthy"
+}

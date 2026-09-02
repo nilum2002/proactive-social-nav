@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-09-01T08:11:58.656387+00:00",
+  "split": "test",
+  "cross_check": true,
+  "dumps_scored": [
+    "drowv2_test_tracks_dr_spaam_5_on_frog_kf_pipelined_conf0.5.npz",
+    "drowv2_test_tracks_dr_spaam_5_on_frog_kf_sequential_conf0.5.npz"
+  ],
+  "rows": [
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -0.13056680161943324,
+      "motp": 0.11375428463567283,
+      "fn": 884,
+      "fp": 1344,
+      "idsw": 6,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "pipelined",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -0.07995951417004044,
+      "motp": 0.12602559696428495,
+      "fn": 834,
+      "fp": 1294,
+      "idsw": 6,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": -0.13056680161943324,
+      "motp": 0.11375428463567283,
+      "fn": 884,
+      "fp": 1344,
+      "idsw": 6,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": -0.07995951417004044,
+      "motp": 0.12602559696428495,
+      "fn": 834,
+      "fp": 1294,
+      "idsw": 6,
+      "gt": 1976,
+      "xcheck_max_mota_delta": 0.0
+    }
+  ],
+  "sequential_vs_pipelined_max_delta": 0.0,
+  "caveat": "pseudo ground truth (see pseudo_gt.py) -- IDSW is a linking-heuristic artifact, not verified identity; FN/FP are more trustworthy"
+}

@@ -1,0 +1,80 @@
+# Cross-dataset generalization benchmark: FROG-trained DR-SPAAM/DROW3
+# checkpoints (frog_dataset/*.pth) evaluated on the DROWv2 test split.
+# This is NOT a reproduction of DROW's own published leaderboard -- the
+# checkpoints here were trained on FROG, not DROW. See drow_ap.py's docstring.
+#
+# DROWv2's public ground truth has NO persistent person identity (just a flat
+# per-scan list of (r,phi) points), unlike FROG's recoverable `idp` tracklets.
+# Two benchmarks live in this directory:
+#   1. AP / precision-recall (drow_ap.py) -- the actual published DROW/DR-SPAAM
+#      metric, faithful to the windowed (T-scan, gate-reset-per-sample)
+#      evaluation protocol in dr_spaam/dr_spaam/model/dr_spaam_fn.py. This is
+#      the primary, literature-comparable-in-*shape* result.
+#   2. Pseudo-MOT (pseudo_gt.py + replay.py + score.py) -- approximates
+#      MOTA/MOTP by greedily linking nearest GT points across consecutive
+#      annotated frames into synthetic tracklets. NOT official ground truth --
+#      IDSW reflects the linking heuristic, not verified identity. Secondary
+#      and informational only; mirrors mot_benchmark/'s FROG pipeline.
+
+paths:
+  repo_root:    ".."                              # config.yaml sits in mot_benchmark_drowv2/
+  data_dir:     "dr_spaam/data/DROWv2-data"
+  split:        "test"
+  out_dir:      "mot_benchmark_drowv2/out"
+  results_dir:  "mot_benchmark_drowv2/results"
+  ap_dir:       "mot_benchmark_drowv2/out/ap_kitti" # scratch dir consumed by evaluate_drow()
+
+detector:
+  weight_file:      "pretrained_weights/self_supervised_person_detection/ckpt_jrdb_ann_ft_dr_spaam_e20.pth"
+  model:             "DR-SPAAM"
+  gpu:               true
+  # T for the windowed AP protocol (drow_ap.py): how many consecutive scans
+  # are fed through the gate (reset, then replayed) per annotated frame.
+  # Matches the checkpoint name -- dr_spaam_5_on_frog.pth was trained on
+  # 5-scan sequences. Swap together with weight_file for the T=1 / DROW3
+  # ablation, same as mot_benchmark/config.yaml.
+  num_scans:         5
+  scan_stride:       1
+  # Swept for the pseudo-MOT path (replay.py); AP integrates over confidence
+  # itself and does not use this.
+  conf_thresholds:   [0.5]
+
+cutout_kwargs:
+  fixed:          true
+  centered:       true
+  window_width:   1.0
+  window_depth:   0.5
+  num_cutout_pts: 56
+  padding_val:    29.99
+  area_mode:      true
+
+scoring:
+  # Pseudo-MOT path only (score.py); drow_ap.py's AP sweep is hardcoded to
+  # [0.3, 0.5] inside dr_spaam.utils.precision_recall.evaluate_drow, mirrored
+  # here so both paths report the same two operating points.
+  association_distances: [0.3, 0.5]
+
+# Mirrors mot_benchmark/config.yaml's tracker block, for the pseudo-MOT path.
+tracker:
+  backend:                 kf
+  association_threshold:   1.0
+  max_lost_frames:         10
+  std_a_x:                 1.5
+  std_a_y:                 1.5
+  r_laser:                 0.2
+  static_speed_threshold:  0.15
+  static_frames_required:  15
+  c_init:                  3
+  c_del:                   10
+  nominal_dt:              0.1       # only used to seed norfair's period on a gap; real dt comes from scan timestamps
+
+pipeline:
+  queue_size: 5
+
+pseudo_gt:
+  # Greedy nearest-neighbor linking of GT (r,phi) points across consecutive
+  # ANNOTATED frames (DROW's annotations are sparse, roughly 1 in 20 scans)
+  # into synthetic tracklets. A gap longer than max_link_gap_s, or no GT point
+  # within max_link_dist, ends a tracklet and starts a new id.
+  max_link_dist:   0.5     # metres
+  max_link_gap_s:  2.0     # seconds

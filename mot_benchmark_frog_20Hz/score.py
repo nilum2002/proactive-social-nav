@@ -1,48 +1,29 @@
-"""Score replayed tracks against FROG ground truth with CLEAR MOT (MOTA / MOTP).
+"""Score replayed 20 Hz-simulated FROG tracks against ground truth with CLEAR
+MOT (MOTA / MOTP). See config.yaml's header for the decimation method and its
+caveats. Otherwise identical to mot_benchmark_frog/score.py -- same
+ClearMotAssociator-based accounting, same Stone Soup 1.9.1 zero-length
+TimeRange patch, same deterministic-ordering fix for build_truths/build_tracks
+(both apply here for the same reasons, unrelated to scan rate).
 
-Association is done with Stone Soup's `ClearMotAssociator`, which is the
-Bernardin et al. (2008) rule: a track keeps its association with a truth from
-the previous timestep even if a closer track appears, and anything left over is
-matched one-to-one by Munkres inside the distance gate.
-
-The accounting is done here rather than by `ClearMotMetrics` for one reason:
-that class computes num_misses / num_false_positives / num_miss_matches /
-number_of_gt_states and then returns only (MOTP, MOTA), discarding the
-components. Two things need them.
-
-  * Reporting. FN / FP / IDSW are what make a MOTA number diagnosable.
-  * Pooling. The FROG test split is 55 disjoint temporal segments, so scores
-    must be combined as 1 - (sum FN + sum FP + sum IDSW) / sum GT and
-    sum(distance) / sum(matches). Averaging 55 per-segment MOTA values would
-    weight a 17 s segment the same as a 90 s one.
-
-To keep that honest, every segment is *also* scored with Stone Soup's own
-ClearMotMetrics and the two are asserted to agree before pooling.
-
-A note on ground-truth fragmentation. FROG's `idp` tracklets are partial -- one
-person may span several ids across occlusions. That costs very little here:
-Stone Soup only counts a mismatch for truth ids present at both of two
-consecutive timestamps, so when a tracklet ends and a fresh id begins, no switch
-is charged. The residual effect is a slightly *optimistic* IDSW (a real switch
-that coincides with a fragment boundary goes unseen), which is worth stating
-alongside the numbers.
-
-Ego-motion: no odometry is fed during replay, so tracking and ground truth are
-both in the sensor frame and match natively. The robot is moving for ~98% of the
-test sequence, so the constant-velocity filter sees ego-motion as target motion.
-That inflates MOTP and is a property of the pipeline under test, not of the
-scoring -- see the moving/static split discussion for the ablation.
+The only real difference: ground truth rows are decimated the same way
+replay.py decimated which scans got detected+tracked (`sampling.decimate` in
+config.yaml), via `build_truths`'s existing `rows` filter argument -- no
+changes needed to the CLEAR-MOT accounting itself. Without this, scoring would
+count every scan replay.py deliberately skipped as a pure miss, which would
+measure "detector randomly drops half its frames" rather than "detector only
+ever sees a 20 Hz stream".
 """
 import argparse
 import datetime as dt
 import glob
+import json
 import os
 import sys
 from collections import defaultdict
 
 import numpy as np
 
-from frog_gt import load_config, DEFAULT_CONFIG
+from common import load_config, DEFAULT_CONFIG
 
 from stonesoup.types.track import Track
 from stonesoup.types.groundtruth import GroundTruthPath, GroundTruthState
@@ -52,50 +33,68 @@ from stonesoup.measures import Euclidean
 from stonesoup.dataassociator.clearmot import ClearMotAssociator
 from stonesoup.metricgenerator.clearmotmetrics import ClearMotMetrics
 from stonesoup.metricgenerator.manager import MultiManager
+from stonesoup.types.interval import Interval
 
 UTC = dt.timezone.utc
 
+# Stone Soup 1.9.1 bug -- see mot_benchmark_frog/score.py's identical comment.
+_orig_interval_init = Interval.__init__
+
+
+def _patched_interval_init(self, *args, **kwargs):
+    try:
+        _orig_interval_init(self, *args, **kwargs)
+    except ValueError:
+        bound = dict(zip(("start", "end"), args)) | kwargs
+        start, end = bound["start"], bound["end"]
+        if isinstance(start, dt.datetime) and start == end:
+            bound["end"] = end + dt.timedelta(microseconds=1)
+            _orig_interval_init(self, **bound)
+        else:
+            raise
+
+
+Interval.__init__ = _patched_interval_init
+
 
 def _ts(x):
-    """Epoch seconds -> datetime. Both sides must key on identical objects:
-    Stone Soup matches timestamps by equality, not by tolerance."""
     return dt.datetime.fromtimestamp(round(float(x), 6), tz=UTC)
 
 
 def build_truths(gt, rows):
-    """One GroundTruthPath per FROG tracklet id present in these rows."""
+    """One GroundTruthPath per FROG tracklet id present in these rows.
+
+    `rows` is the decimated (20 Hz) row set passed in from main() -- see
+    module docstring. Returns a list sorted by id, not a set -- see
+    mot_benchmark_frog/score.py's build_truths docstring for why.
+    """
     by_id = defaultdict(list)
     row_set = set(rows.tolist())
     for scan_row, gid, (x, y) in zip(gt["gt_scan"], gt["gt_id"], gt["gt_xy"]):
         if int(scan_row) not in row_set:
             continue
         by_id[int(gid)].append((_ts(gt["timestamp"][int(scan_row)]), float(x), float(y)))
-    truths = set()
-    for gid, obs in by_id.items():
+    truths = []
+    for gid, obs in sorted(by_id.items()):
         obs.sort(key=lambda o: o[0])
-        path = GroundTruthPath(
+        truths.append(GroundTruthPath(
             [GroundTruthState(StateVector([x, y]), timestamp=t) for t, x, y in obs],
-            id=f"gt{gid}")
-        truths.add(path)
+            id=f"gt{gid}"))
     return truths
 
 
 def build_tracks(tr, seg):
-    """One Track per tracker id within this segment.
-
-    Ids are namespaced by segment because the replay rebuilds the tracker at
-    every segment boundary, so id 1 in segment 0 and id 1 in segment 7 are
-    unrelated objects.
-    """
+    """One Track per tracker id within this segment. Already only contains the
+    decimated rows replay.py recorded -- see build_truths."""
     m = tr["segment"] == seg
     by_id = defaultdict(list)
     for tid, t, (x, y) in zip(tr["track_id"][m], tr["timestamp"][m], tr["xy"][m]):
         by_id[int(tid)].append((_ts(t), float(x), float(y)))
-    tracks = set()
-    for tid, obs in by_id.items():
+    tracks = []
+    for tid, obs in sorted(by_id.items()):
         obs.sort(key=lambda o: o[0])
-        tracks.add(Track([State(StateVector([x, y]), timestamp=t) for t, x, y in obs],
-                         id=f"s{seg}t{tid}"))
+        tracks.append(Track([State(StateVector([x, y]), timestamp=t) for t, x, y in obs],
+                            id=f"s{seg}t{tid}"))
     return tracks
 
 
@@ -114,7 +113,6 @@ def clearmot_counts(tracks, truths, assoc_set):
     for ts in sorted(set(truth_at) | set(track_at)):
         for a in assoc_set.associations_at_timestamp(ts):
             objs = list(a.objects)
-            # orientation is not guaranteed; identify the truth by membership
             truth_ids = {p.id for p in truths}
             tr_id = next((o.id for o in objs if o.id in truth_ids), None)
             tk_id = next((o.id for o in objs if o.id not in truth_ids), None)
@@ -178,7 +176,11 @@ def main(argv=None):
 
     cfg = load_config(args.config)
     p = cfg["paths"]
-    gt = np.load(os.path.join(p["out_dir"], f"frog_{p['bag']}_gt.npz"), allow_pickle=True)
+    decimate = int(cfg["sampling"]["decimate"])
+
+    if not os.path.exists(p["gt"]):
+        sys.exit(f"missing {p['gt']} -- run mot_benchmark_frog/frog_gt.py first")
+    gt = np.load(p["gt"], allow_pickle=True)
     dumps = sorted(glob.glob(os.path.join(p["out_dir"], f"tracks_{p['bag']}_*.npz")))
     if not dumps:
         sys.exit("no track dumps found -- run replay.py first")
@@ -187,6 +189,7 @@ def main(argv=None):
           f"{'MOTA':>8} {'MOTP(m)':>8} {'FN':>7} {'FP':>7} {'IDSW':>5} {'GT':>7}")
     print("-" * 104)
     results = []
+    json_rows = []
     for dump in dumps:
         tr = np.load(dump, allow_pickle=True)
         mode, conf = str(tr["pipeline"]), float(tr["conf_thresh"])
@@ -198,7 +201,7 @@ def main(argv=None):
             covered = set(tr["segments_run"].tolist()) if "segments_run" in tr.files \
                 else set(np.unique(gt["segment"]).tolist())
             for seg in sorted(covered):
-                rows = np.nonzero(gt["segment"] == seg)[0]
+                rows = np.nonzero(gt["segment"] == seg)[0][::decimate]
                 truths = build_truths(gt, rows)
                 tracks = build_tracks(tr, int(seg))
                 if not truths:
@@ -212,17 +215,40 @@ def main(argv=None):
             print(f"{variant:>22} {trk:>8} {mode:>10} {conf:>5} {ad:>4} {mota:>8.4f} {motp:>8.4f} "
                   f"{int(tot['fn']):>7} {int(tot['fp']):>7} {int(tot['idsw']):>5} {int(tot['gt']):>7}")
             results.append((f'{variant}/{trk}', mode, conf, ad, mota, motp, tot))
+            json_rows.append(dict(
+                variant=variant, tracker=trk, pipeline=mode, conf=conf, ad=ad,
+                mota=mota, motp=motp, fn=int(tot["fn"]), fp=int(tot["fp"]),
+                idsw=int(tot["idsw"]), gt=int(tot["gt"]),
+                xcheck_max_mota_delta=worst if worst > 1e-9 else 0.0,
+            ))
             if worst > 1e-9:
                 print(f"           ^ cross-check max |ΔMOTA| vs stonesoup = {worst:.2e}")
 
     seqs = {(v, c, a): (m1, m2) for v, md, c, a, m1, m2, _ in results if md == "sequential"}
     pips = {(v, c, a): (m1, m2) for v, md, c, a, m1, m2, _ in results if md == "pipelined"}
     both = set(seqs) & set(pips)
+    seq_vs_pipelined_max_delta = None
     if both:
         d = max(max(abs(seqs[k][0] - pips[k][0]), abs(seqs[k][1] - pips[k][1])) for k in both)
+        seq_vs_pipelined_max_delta = d
         print(f"\nsequential vs pipelined: max |Δ| across {len(both)} settings = {d:.3e}")
         print("  (expected 0 -- the pipelined node never drops a frame and its single"
               "\n   consumer preserves order and dt, so the tracking maths is identical)")
+
+    os.makedirs(p["results_dir"], exist_ok=True)
+    stamp = dt.datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    out_path = os.path.join(p["results_dir"], f"{p['bag']}_20Hz_{stamp}.json")
+    with open(out_path, "w") as f:
+        json.dump(dict(
+            timestamp=dt.datetime.now(UTC).isoformat(),
+            bag=p["bag"],
+            decimate=decimate,
+            cross_check=not args.no_cross_check,
+            dumps_scored=[os.path.basename(d) for d in dumps],
+            rows=json_rows,
+            sequential_vs_pipelined_max_delta=seq_vs_pipelined_max_delta,
+        ), f, indent=2)
+    print(f"\nwrote {out_path}")
     return 0
 
 

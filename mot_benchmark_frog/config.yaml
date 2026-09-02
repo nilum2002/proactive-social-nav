@@ -6,7 +6,8 @@ paths:
   circles_dir:  "frog-raw-circles/circles"      # raw labelling-tool CSVs (carry `idp`)
   h5:           "frog_dataset/frog_16-41_test.h5"
   odom:         "frog_dataset/frog_16-41_odom.npz"
-  out_dir:      "mot_benchmark/out"
+  out_dir:      "mot_benchmark_frog/out"
+  results_dir:  "mot_benchmark_frog/results"     # one JSON per score.py run, see score.py::main
   bag:          "16-41"                          # which sequence the CSVs/h5 belong to
 
 # FROG sensor geometry. Taken from the official loader
@@ -29,7 +30,7 @@ detector:
   panoramic_scan: false
   # Swept, not fixed: the deployed 0.8 trades away almost all recall, which
   # would show up as a huge miss count rather than as a tracker property.
-  conf_thresholds: [0.8]
+  conf_thresholds: [0.5]
 
   # Temporal-memory ablation.
   #
@@ -86,4 +87,4 @@ pipeline:
 
 scoring:
   # FROG's own operating points (leaderboard reports ad = 0.5 and 0.3 m).
-  association_distances: [0.5, 0.3]
+  association_distances: [0.5, 1.0]

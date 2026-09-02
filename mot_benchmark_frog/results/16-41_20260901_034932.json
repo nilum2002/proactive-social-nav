@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-09-01T03:49:32.169104+00:00",
+  "bag": "16-41",
+  "cross_check": true,
+  "dumps_scored": [
+    "tracks_16-41_dr_spaam_5_on_frog_kf_sequential_conf0.5.npz"
+  ],
+  "rows": [
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.5,
+      "mota": 0.4619960300673587,
+      "motp": 0.07774618604619514,
+      "fn": 41703,
+      "fp": 40870,
+      "idsw": 94,
+      "gt": 153655,
+      "xcheck_max_mota_delta": 0.0
+    },
+    {
+      "variant": "dr_spaam_5_on_frog",
+      "tracker": "kf",
+      "pipeline": "sequential",
+      "conf": 0.5,
+      "ad": 0.3,
+      "mota": 0.43959519703231265,
+      "motp": 0.0712977772774361,
+      "fn": 43427,
+      "fp": 42594,
+      "idsw": 88,
+      "gt": 153655,
+      "xcheck_max_mota_delta": 0.0
+    }
+  ],
+  "sequential_vs_pipelined_max_delta": null
+}

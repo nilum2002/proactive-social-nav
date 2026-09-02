@@ -1,0 +1,92 @@
+# CLEAR-MOT (MOTA / MOTP) benchmark on JRDB, using a JRDB-domain checkpoint
+# from pretrained_weights/self_supervised_person_detection/.
+#
+# Why JRDB, and why this is stronger ground truth than mot_benchmark_drowv2/:
+# JRDB's 3D box labels carry a persistent `label_id` (e.g. "pedestrian:46")
+# that is temporally consistent within a sequence -- REAL tracking identity,
+# not the greedy nearest-neighbour pseudo-tracklets DROWv2 needed. This
+# benchmark is structured like mot_benchmark_frog/ (real GT identities, one
+# tracker reset per sequence) rather than mot_benchmark_drowv2/ (synthetic
+# linking).
+#
+# ------------------------------------------------------------------------
+# PREREQUISITES -- none of this is downloaded/built automatically:
+#
+# 1. Register and log in at https://jrdb.erc.monash.edu/ and download the
+#    "JRDB" (2019 or 2022) train_dataset for at least these sequences (the
+#    ones with public annotations -- `_JRDB_TEST_SEQUENCES` in
+#    dr_spaam/dr_spaam/dataset/jrdb_dataset.py, mirrored below as
+#    TEST_SEQUENCES): timestamps/, labels/labels_3d/, and rosbags/.
+#    You do NOT need pointclouds/, images/, or detections_2d_stitched/ for
+#    this benchmark -- it is 2D-lidar-only, so skip those to save a lot of
+#    bandwidth/disk if the download lets you pick subsets.
+#    Extract into: dr_spaam/data/JRDB/train_dataset/...
+#
+# 2. The combined 2D laser scan is NOT shipped as flat files -- it lives
+#    inside each sequence's rosbag and must be extracted once:
+#      pip install rosbag --extra-index-url https://rospypi.github.io/simple/
+#      cd dr_spaam/bin && python setup_jrdb_dataset.py
+#    (that script hardcodes `_jrdb_dir = "./data/JRDB"`, i.e. run it from
+#    dr_spaam/bin/ as shown, or edit the constant). It writes
+#    train_dataset/lasers/<seq>/*.txt and frames_pc_im_laser.json per
+#    sequence -- both of which this benchmark reads directly.
+#
+# 3. `pretrained_weights/self_supervised_person_detection/` must already
+#    have ckpt_jrdb_ann_ft_dr_spaam_e20.pth (downloaded earlier in this repo).
+#
+# Angle-convention note (see jrdb_common.py): JRDB's laser frame is
+# x-forward/y-left; DR-SPAAM/DROW was trained in x-forward/y-right. Every
+# raw scan is point-reversed before detection to match -- this is not
+# optional preprocessing, it is what the checkpoint was trained on
+# (dr_spaam/dr_spaam/dataset/jrdb_dataset.py::_get_sample).
+# ------------------------------------------------------------------------
+
+paths:
+  repo_root:    ".."                       # config.yaml sits in mot_benchmark_jrdb/
+  data_dir:     "dr_spaam/data/JRDB"        # expects train_dataset/ inside
+  out_dir:      "mot_benchmark_jrdb/out"
+  results_dir:  "mot_benchmark_jrdb/results"
+
+detector:
+  weight_file:      "pretrained_weights/self_supervised_person_detection/ckpt_jrdb_ann_ft_dr_spaam_e20.pth"
+  model:             "DR-SPAAM"
+  gpu:               true
+  stride:            1
+  panoramic_scan:    true      # JRDB's combined laser covers 360 degrees, unlike FROG's 180
+  # Informational only -- streaming replay.py calls the detector one scan at
+  # a time (auto-regressive gate memory), same as mot_benchmark_frog/. This
+  # just records what T the checkpoint itself was trained with (see
+  # dr_spaam/cfgs/base_dr_spaam_jrdb_cfg.yaml: DataHandle.num_scans).
+  num_scans:         10
+  reset_every_scan:  false
+  # Uncalibrated starting point -- sweep this once real data is in hand (see
+  # the FN/FP-balance discussion for mot_benchmark_frog/mot_benchmark_drowv2;
+  # the same "single fixed threshold vs. AP's whole PR curve" gap applies
+  # here, likely worse since this checkpoint was JRDB-finetuned and this IS
+  # JRDB, so results should be closer to well-calibrated than the DROWv2 run.
+  conf_thresholds:   [0.5]
+
+tracker:
+  backend:                 kf
+  association_threshold:   1.0
+  max_lost_frames:         10
+  std_a_x:                 1.5
+  std_a_y:                 1.5
+  r_laser:                 0.2
+  static_speed_threshold:  0.15
+  static_frames_required:  15
+  c_init:                  3
+  c_del:                   10
+  # JRDB's combined laser scan rate varies by sequence/topic; real dt is
+  # read from each frame's timestamp (see replay.py), same as FROG. This is
+  # only a fallback seed for norfair's gap-period conversion.
+  nominal_dt:              0.1
+
+pipeline:
+  queue_size: 5
+
+scoring:
+  # Same two operating points used for mot_benchmark_frog/mot_benchmark_drowv2,
+  # for comparability -- not an official JRDB leaderboard metric (JRDB's own
+  # tracking benchmark uses different, 3D/OSPA-based metrics).
+  association_distances: [0.3, 0.5]

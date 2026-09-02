@@ -15,6 +15,10 @@
 #   ./run_mot_benchmark.sh                  # both trackers, both pipelines
 #   ./run_mot_benchmark.sh --smoke          # 2 segments, ~4 min, checks plumbing
 #   ./run_mot_benchmark.sh --tracker norfair
+#   ./run_mot_benchmark.sh --method kf-pipelined
+#                                           # shorthand for --tracker kf --pipeline pipelined
+#                                           # also: kf, norfair, kf-sequential,
+#                                           # norfair-sequential, norfair-pipelined
 #   ./run_mot_benchmark.sh -- --max-segments 5 --conf 0.5
 #                                           # everything after -- goes to replay.py
 #
@@ -23,8 +27,8 @@
 set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$REPO_ROOT/venv/bin/python3"          # has torch, h5py, stonesoup, norfair
-MB="$REPO_ROOT/mot_benchmark"
+PY="$REPO_ROOT/.venv/bin/python3"         # has torch, h5py, stonesoup, norfair
+MB="$REPO_ROOT/mot_benchmark_frog"
 
 TRACKERS="kf norfair"
 PIPELINES="both"
@@ -35,6 +39,15 @@ while [[ $# -gt 0 ]]; do
     --smoke)     EXTRA+=(--max-segments 2 --conf 0.5); shift ;;
     --tracker)   TRACKERS="$2"; shift 2 ;;
     --pipeline)  PIPELINES="$2"; shift 2 ;;
+    --method)
+      m="$2"; shift 2
+      case "$m" in
+        kf|norfair)                           TRACKERS="$m" ;;
+        kf-sequential|kf-pipelined)           TRACKERS="kf";      PIPELINES="${m#kf-}" ;;
+        norfair-sequential|norfair-pipelined) TRACKERS="norfair"; PIPELINES="${m#norfair-}" ;;
+        *) echo "unknown --method '$m' (want kf|norfair|kf-sequential|kf-pipelined|norfair-sequential|norfair-pipelined)" >&2
+           exit 1 ;;
+      esac ;;
     --)          shift; EXTRA+=("$@"); break ;;
     *)           EXTRA+=("$1"); shift ;;
   esac

@@ -1,0 +1,49 @@
+# AP / precision-recall benchmark for DR-SPAAM(T=1) vs DR-SPAAM(T=5) on the
+# FROG test split. See frog_ap.py's docstring for the evaluation protocol.
+#
+# Reuses ground truth already built and cross-checked by mot_benchmark_frog/frog_gt.py
+# (run that first if mot_benchmark_frog/out/frog_16-41_gt.npz is missing) and the
+# scans in frog_dataset/frog_16-41_test.h5, rather than re-deriving them --
+# this directory only adds the detection-only AP evaluation on top.
+
+paths:
+  repo_root:    ".."                                # config.yaml sits in frog_benchmark/
+  h5:           "frog_dataset/frog_16-41_test.h5"
+  gt:           "mot_benchmark_frog/out/frog_16-41_gt.npz"
+  results_dir:  "frog_benchmark/results"
+  ap_dir:       "frog_benchmark/out/ap_kitti"        # scratch dir consumed by evaluate_drow()
+
+# FROG sensor geometry. Taken from the official loader
+# (2DLaserPeopleBenchmark/utils/data_loader.py): 720 pts over 180 deg,
+# `endpoint=False` in the linspace -- see frog_common.py::build_scan_phi.
+frog:
+  num_pts:    720
+  fov_deg:    180.0
+  range_min:  0.2
+  range_max:  10.0
+
+detector:
+  gpu:          true
+  scan_stride:  1
+
+cutout_kwargs:
+  fixed:          true
+  centered:       true
+  window_width:   1.0
+  window_depth:   0.5
+  num_cutout_pts: 56
+  padding_val:    29.99
+  area_mode:      true
+
+# Windowed (T-scan, gate-reset-per-sample) AP protocol, one entry per
+# checkpoint to compare. `num_scans` matches each checkpoint's own training
+# regime -- see mot_benchmark_frog/config.yaml's temporal-memory-ablation comment.
+checkpoints:
+  - name:         "DR-SPAAM(T=1)"
+    weight_file:  "frog_dataset/dr_spaam_1_on_frog.pth"
+    model:        "DR-SPAAM"
+    num_scans:    1
+  - name:         "DR-SPAAM(T=5)"
+    weight_file:  "frog_dataset/dr_spaam_5_on_frog.pth"
+    model:        "DR-SPAAM"
+    num_scans:    5

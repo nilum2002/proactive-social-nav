@@ -1,0 +1,81 @@
+# CLEAR-MOT (MOTA / MOTP) benchmark on the FROG test split at a simulated
+# 20 Hz scan rate, vs mot_benchmark_frog/'s native 40 Hz.
+#
+# Simulation method: keep every `sampling.decimate`-th scan (2 -> 40/2 = 20 Hz)
+# and feed ONLY those kept scans to the detector -- i.e. DR-SPAAM's
+# auto-regressive memory only ever sees the decimated stream, exactly as it
+# would if the LIDAR itself ran at 20 Hz. This is the "faithful" simulation,
+# not a cheaper alternative where detection still runs at 40 Hz and only the
+# recorded output is subsampled -- see replay.py's docstring.
+#
+# Ground truth is NOT rebuilt here: it reuses mot_benchmark_frog/frog_gt.py's
+# already cross-checked frog_16-41_gt.npz (run that script first if missing).
+# Person positions don't depend on scan rate; only *which* scans (and their
+# rows) get scored changes, so score.py decimates the same way replay.py does.
+#
+# Caveat worth keeping alongside any MOTA/MOTP delta vs the 40 Hz benchmark:
+# the checkpoints here were trained with scans spaced at FROG's native 40 Hz.
+# Feeding them 20 Hz-spaced scans doubles the real-world gap the auto-regressive
+# gate treats as "one step back", so a change in the numbers is a mix of
+# genuine lower-rate degradation and train/inference cadence mismatch, not
+# pure evidence about 20 Hz sensing in general.
+
+paths:
+  repo_root:    ".."                                       # config.yaml sits in mot_benchmark_frog_20Hz/
+  h5:           "frog_dataset/frog_16-41_test.h5"
+  gt:           "mot_benchmark_frog/out/frog_16-41_gt.npz"  # built by mot_benchmark_frog/frog_gt.py
+  out_dir:      "mot_benchmark_frog_20Hz/out"
+  results_dir:  "mot_benchmark_frog_20Hz/results"
+  bag:          "16-41"
+
+sampling:
+  # Keep every Nth scan; N=2 halves 40 Hz to 20 Hz. Applied identically in
+  # replay.py (which scans get detected+tracked) and score.py (which ground-
+  # truth rows get scored) -- must always match between the two.
+  decimate: 2
+
+# FROG sensor geometry -- identical to mot_benchmark_frog/config.yaml, unaffected
+# by scan rate.
+frog:
+  num_pts:    720
+  fov_deg:    180.0
+  range_min:  0.2
+  range_max:  10.0
+  person_r:   0.4
+
+detector:
+  weight_file:    "frog_dataset/dr_spaam_5_on_frog.pth"
+  model:          "DR-SPAAM"
+  gpu:            true
+  stride:         1
+  panoramic_scan: false
+  conf_thresholds: [0.8]
+  reset_every_scan: false
+
+tracker:
+  # Count-based knobs below (c_init, c_del, static_frames_required) are
+  # unchanged from mot_benchmark_frog/config.yaml, but now correspond to twice
+  # the wall-clock time each: c_init=3 was 75 ms at 40 Hz, it is 150 ms here.
+  # Left as-is deliberately -- this benchmark asks "same tracker config, slower
+  # sensor", not "retune the tracker for 20 Hz".
+  backend:                 kf
+
+  association_threshold:   1.0
+  max_lost_frames:         10
+  std_a_x:                 1.5
+  std_a_y:                 1.5
+  r_laser:                 0.2
+  static_speed_threshold:  0.15
+  static_frames_required:  15
+
+  c_init:                  3
+  c_del:                   10
+  # 20 Hz operating rate (0.025 s native * sampling.decimate=2). Only used to
+  # convert a long gap into norfair's integer period.
+  nominal_dt:              0.05
+
+pipeline:
+  queue_size: 5
+
+scoring:
+  association_distances: [0.5, 0.75]
