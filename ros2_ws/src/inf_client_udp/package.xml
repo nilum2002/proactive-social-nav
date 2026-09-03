@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>inf_client_udp</name>
+  <version>0.1.0</version>
+  <description>
+    UDP client running on the robot: forwards /scan and /odom to inf_server_udp
+    as single-datagram packets, which runs DR-SPAAM detection and Kalman-filter
+    tracking off-board. The UDP sibling of inf_client -- same job, loss-tolerant
+    transport, so the two can be benchmarked against each other.
+  </description>
+  <maintainer email="sachithyanilum@gmail.com">nilum</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <exec_depend>python3-protobuf</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

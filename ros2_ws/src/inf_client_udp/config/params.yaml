@@ -1,0 +1,31 @@
+inf_client_udp_node:
+  ros__parameters:
+    # ── Link ───────────────────────────────────────────────────────────────
+    server_address: "192.168.0.100:50054"  # host:port of the inf_server_udp machine
+                                           # (50054, not 50053: the gRPC inf_server
+                                           # can keep running alongside for A/B)
+    scan_topic: "/scan"
+    odom_topic: "/odom"
+    robot_name: "botzilla"
+    snd_buffer_kb: 512
+    dscp: 0                # 34 (AF41) puts packets in the Wi-Fi video access
+                           # category and cuts jitter on a busy AP -- but some
+                           # APs police marked traffic, so this is opt-in.
+
+    # ── Session / liveness ─────────────────────────────────────────────────
+    keepalive_period_s: 1.0   # HELLO retry, then heartbeat cadence
+    heartbeat_idle_s: 1.0     # send a heartbeat after this long with no traffic
+    status_log_period_s: 5.0
+
+    # ── Odometry ───────────────────────────────────────────────────────────
+    odom_redundancy: 3        # samples per packet; ~50 B each buys immunity to
+                              # isolated loss without any retransmission
+    odom_max_rate_hz: 25.0    # 0 disables the throttle. The server pairs odom to
+                              # scans by nearest timestamp, so more than this is
+                              # bandwidth spent where the scans need it.
+
+    # ── Rate adaptation ────────────────────────────────────────────────────
+    adaptive_rate: true       # the only congestion brake in the system
+    loss_high_ratio: 0.10     # above this reported loss, send fewer scans
+    loss_low_ratio: 0.02      # below this, recover one step (gap = hysteresis)
+    max_decimation: 4         # never send fewer than 1-in-4 scans
