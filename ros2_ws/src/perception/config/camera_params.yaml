@@ -1,0 +1,31 @@
+# Wildcard key, not "camera_node:".  camera.launch.py puts the node in the
+# /camera namespace, so its fully-qualified name is /camera/camera_node and a
+# bare "camera_node:" key matches nothing - the node silently comes up on code
+# defaults instead.
+/**:
+  ros__parameters:
+    video_device: 0            # /dev/video0 - the DV20 USB webcam
+    frame_id: camera_link
+    width: 640
+    height: 480
+    fps: 15.0
+
+    # Raw off, JPEG on.  Raw bgr8 at 640x480/15 is ~14 MB/s; as JPEG it is under
+    # 1 MB/s.  With ~4.8 GB free on this card, recording raw lasts minutes and
+    # recording JPEG lasts hours.
+    publish_raw: false
+    publish_compressed: true
+    jpeg_quality: 80
+
+    # MJPG lets the camera do the compression, so the Pi is not spending CPU
+    # converting YUYV for every frame.
+    fourcc: MJPG
+
+    reliable_qos: false
+
+    # Camera is mounted upright, so no rotation. Set to 180 if it is ever
+    # remounted inverted -- prefer rotate_deg over flip_vertical, since
+    # flipping a single axis mirrors the scene as well as inverting it.
+    rotate_deg: 0
+    flip_horizontal: false
+    flip_vertical: false
