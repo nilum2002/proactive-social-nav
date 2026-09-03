@@ -1,0 +1,31 @@
+inf_client_wifi_node:
+  ros__parameters:
+    # ── Topics ─────────────────────────────────────────────────────────────
+    scan_topic: "/scan"           # from the driver stack, on this machine
+    odom_topic: "/odom"
+    out_scan_topic: "/wifi/scan"  # what inf_server subscribes to over the link.
+    out_odom_topic: "/wifi/odom"  # Namespaced so it is unambiguous which topic
+                                  # crossed the network when reading a bag.
+    robot_name: "botzilla"
+
+    # ── QoS ────────────────────────────────────────────────────────────────
+    input_reliability: "best_effort"   # compatible with both RELIABLE and
+                                       # BEST_EFFORT publishers; RELIABLE here
+                                       # would receive nothing from a
+                                       # BEST_EFFORT driver.
+    output_reliability: "best_effort"  # the whole point of this package. Set
+                                       # "reliable" to measure how badly DDS
+                                       # retransmission behaves over WiFi --
+                                       # that is a result, not a misconfig.
+    output_depth: 1                    # KEEP_LAST(1): never hold a stale scan
+                                       # behind a fresh one.
+
+    # ── Rate ───────────────────────────────────────────────────────────────
+    scan_decimation: 1        # 1 = forward every scan. There is no adaptive
+                              # rate control here: DDS BEST_EFFORT gives the
+                              # publisher no loss feedback to adapt on, unlike
+                              # inf_client_udp's STATS packet. Raise it by hand
+                              # to match a decimated UDP run.
+    odom_max_rate_hz: 25.0    # 0 disables. Mirrors inf_client_udp so both
+                              # transports carry the same odom load.
+    status_log_period_s: 5.0

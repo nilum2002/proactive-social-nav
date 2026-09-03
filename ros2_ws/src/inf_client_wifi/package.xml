@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>inf_client_wifi</name>
+  <version>0.1.0</version>
+  <description>
+    Plain-DDS client running on the robot: republishes /scan and /odom onto
+    off-board-visible topics with WiFi-appropriate QoS, so inf_server can
+    subscribe to them directly with no custom transport in between. The DDS
+    sibling of inf_client (gRPC/TCP) and inf_client_udp (raw datagrams) -- the
+    control condition those two are measured against.
+  </description>
+  <maintainer email="sachithyanilum@gmail.com">nilum</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
