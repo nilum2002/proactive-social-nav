@@ -1,0 +1,39 @@
+inf_server_udp_node:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.8
+    stride: 1
+    panoramic_scan: false
+    gpu: true
+
+    status_log_period_s: 5.0
+
+    association_threshold: 1.0
+    max_lost_frames: 10
+    std_a_x: 0.9
+    std_a_y: 0.9
+    r_laser: 0.2
+    static_speed_threshold: 0.01
+    static_frames_required: 15
+
+    track_poses_topic: "~/track_poses"
+    markers_topic: "~/markers"
+    detections_marker_topic: "~/detection_markers"
+    scan_topic: "~/scan"
+    laser_frame_id: "laser"   # must match the base_link->laser static TF in the launch file
+
+    # ── UDP link ───────────────────────────────────────────────────────────
+    bind_address: "0.0.0.0"
+    port: 50054              # 50054, not 50053: the gRPC inf_server can keep
+                             # running alongside for an A/B comparison.
+    rcv_buffer_kb: 1024      # A small receive buffer is where scans are lost
+                             # invisibly: the kernel drops them before we ever
+                             # see a sequence gap to count.
+    session_timeout_s: 5.0   # silence after which a session (and its tracker)
+                             # is reaped; the client heartbeats to stay alive
+    stats_period_s: 1.0      # how often loss/jitter is mailed back -- this is
+                             # the client's only congestion signal
+    odom_history: 32         # poses kept for timestamp pairing
+    odom_match_tolerance_s: 0.15   # give up pairing beyond this; the scan is
+                                   # then tracked in the laser frame instead
