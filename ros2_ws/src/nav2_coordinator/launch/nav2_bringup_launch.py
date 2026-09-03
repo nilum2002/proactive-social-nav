@@ -3,7 +3,7 @@ Full navigation stack for the qbot, without EKF/IMU fusion.
 
 Brings up, in order:
   kobuki_node        - /cmd_vel in, /odom out, broadcasts odom -> base_link
-  lidar_node         - /scan, plus the static base_link -> laser transform
+  rplidar_node       - /scan, plus the static base_link -> laser transform
   map -> odom        - slam_toolbox (slam:=true) or map_server + amcl (slam:=false)
   nav2               - planner/controller/bt_navigator (navigation_launch.py)
   nav2_coordinator   - 'navigate_to_coordinate' service wrapping NavigateToPose
@@ -115,14 +115,19 @@ def generate_launch_description():
         ),
 
         
+        # RPLIDAR C1M1, matching teleop_stack_launch.py.  lidar_launch.py drives
+        # the LD19 at 230400 baud; the C1M1 needs rplidar_ros at 460800, so the
+        # old include opened the port and never published a scan.
+        # rplidar_c1_launch.py declares no use_sim_time -- passing one would make
+        # the include fail on an unknown argument.  It also publishes
+        # base_link->laser itself (publish_tf defaults true).
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(lidar_share, 'launch', 'lidar_launch.py')),
+                os.path.join(lidar_share, 'launch', 'rplidar_c1_launch.py')),
             launch_arguments=[
                 ('serial_port', LaunchConfiguration('lidar_port')),
                 ('frame_id', 'laser'),
                 ('parent_frame', 'base_link'),
-                ('use_sim_time', use_sim_time),
             ],
         ),
 
