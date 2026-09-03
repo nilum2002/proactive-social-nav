@@ -4,7 +4,7 @@ inf_server_node:
     detector_model: "DR-SPAAM"
     conf_thresh: 0.8
     stride: 1
-    panoramic_scan: true
+    panoramic_scan: false
     gpu: true
 
     bind_address: "0.0.0.0"

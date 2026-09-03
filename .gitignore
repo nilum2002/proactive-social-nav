@@ -15,3 +15,5 @@ dr_spaam_ros2/install/
 dr_spaam_ros2/log/
 venv/
 .vscode/
+HDF5/
+frog_dataset/frog_16-41_test.h5
