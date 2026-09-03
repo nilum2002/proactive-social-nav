@@ -77,12 +77,11 @@ def generate_launch_description():
         # base_link->laser; letting both publish it would put two static
         # broadcasters on the same transform.
         #
-        # This publishes 720 bins (5 kHz / 10 Hz -> 500 pts, which rplidar_ros
-        # angle-compensates onto a 360*2 grid). That is fine over gRPC, which
-        # streams over TCP. It is NOT fine for inf_client_udp: 720 bins is a
-        # 1498 B datagram, past the 1472 B MTU, so every scan would IP-fragment
-        # and a scan is lost if either fragment is. Resample to 450 before
-        # putting this on the UDP path.
+        # angle_compensate now defaults to false in rplidar_c1_launch.py, so this
+        # publishes the C1's native ~500 points rather than 720 compensated bins.
+        # 720 bins measured 1498 B on the wire, past the 1472 B MTU, and
+        # IP-fragmented every scan on the inf_client_udp path; ~500 points is
+        # ~1058 B and fits. See that launch file for the DR-SPAAM trade-off.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(lidar_launch),
             launch_arguments=[

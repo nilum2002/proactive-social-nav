@@ -9,9 +9,16 @@ Measured on this unit (firmware 1.02, hardware rev 18):
     -> 500 points/revolution, which rplidar_ros's angle_compensate bins into
        360 * 2 = 720 fixed slots at 0.499 deg.
 
-NOTE: 720 bins does NOT fit one UDP datagram (1498 B > 1472 B MTU), so
-inf_client_udp would IP-fragment every scan. Run a resampler down to 450 bins
-before publishing the /scan that inf_client_udp forwards.
+NOTE: angle_compensate defaults to FALSE here. Compensated, the sweep becomes
+720 fixed bins -> a 1498 B datagram, past the 1472 B MTU, so inf_client_udp
+IP-fragmented every scan (measured; a fragmented scan is lost if either half
+is). Raw, the C1 emits its native ~500 points -> ~1058 B, comfortably inside
+the 1400 B budget.
+
+The cost: a raw sweep's point count varies slightly scan to scan. DR-SPAAM on
+inf_server sizes its FOV once from the first scan it sees, so if it starts
+rejecting scans or mis-sizing the FOV, that is this trade-off, not a bug --
+re-enable with angle_compensate:=true and resample to 450 bins instead.
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -39,10 +46,11 @@ def generate_launch_description():
                         'rplidar_ros already reports counter-clockwise. Flip this '
                         'only if the map comes out mirrored.'),
         DeclareLaunchArgument(
-            'angle_compensate', default_value='true',
-            description='Bins the sweep into a fixed 720-slot grid. Keep it true: '
-                        'DR-SPAAM is configured once from the first scan length, so '
-                        'a scan whose point count wanders breaks its FOV setup.'),
+            'angle_compensate', default_value='false',
+            description='false = publish the native ~500-point sweep, which fits one '
+                        'UDP datagram. true = bin onto a fixed 720-slot grid, which '
+                        'gives DR-SPAAM a constant scan length but overflows the MTU; '
+                        'only pair true with a resampler down to 450 bins.'),
         DeclareLaunchArgument(
             'publish_tf', default_value='true',
             description='Publish base_link->laser here. Set false when including '
