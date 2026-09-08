@@ -19,4 +19,7 @@ cd "$REPO_ROOT/ros2_ws"
 colcon build --packages-select kobuki_driver lidar_driver inf_client --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
 source install/setup.bash
 
-ros2 launch kobuki_driver teleop_stack_launch.py
+# "$@" passthrough so the stack can be started without its gRPC client:
+#   ./kobuki_stack.sh                          # gRPC run, client included
+#   ./kobuki_stack.sh use_inf_client:=false    # sensors only, pick a client
+ros2 launch kobuki_driver teleop_stack_launch.py "$@"

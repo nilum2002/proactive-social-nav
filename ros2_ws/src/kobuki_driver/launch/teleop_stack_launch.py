@@ -2,6 +2,7 @@ import os
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -36,6 +37,15 @@ def generate_launch_description():
             'use_sim_time',
             default_value='false',
             description='Use simulation time',
+        ),
+        DeclareLaunchArgument(
+            'use_inf_client',
+            default_value='true',
+            description='Start the gRPC inf_client with the stack. Set false to '
+                        'get sensors only, then run exactly one of grpc_client.sh, '
+                        'udp_client.sh or wifi_client.sh by hand. Leaving it true '
+                        'while running another client puts two transports on the '
+                        'same WiFi link, and each then measures the other.',
         ),
 
         # Kobuki base driver only -- teleop drives the robot directly, so raw
@@ -90,8 +100,11 @@ def generate_launch_description():
             ],
         ),
 
-        # gRPC client: forwards /scan and /odom to inf_server
+        # gRPC client: forwards /scan and /odom to inf_server.
+        # Conditional so this stack can also serve as the sensors-only base for
+        # a UDP or plain-DDS run -- see use_inf_client above.
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(inf_client_launch),
+            condition=IfCondition(LaunchConfiguration('use_inf_client')),
         ),
     ])
