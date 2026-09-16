@@ -1,6 +1,3 @@
-#!/bin/bash
-# Source ROS2 + venv (grpcio lives only in the venv, not system python), then build
-# and launch inf_client: forwards /scan and /odom to inf_server over gRPC.
 set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

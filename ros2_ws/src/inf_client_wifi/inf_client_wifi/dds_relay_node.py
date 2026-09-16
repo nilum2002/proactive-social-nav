@@ -1,35 +1,4 @@
 """inf_client_wifi: forwards /scan and /odom off-board over plain ROS 2 DDS.
-
-The third sibling of inf_client (gRPC over TCP) and inf_client_udp (raw
-datagrams), and the one with no custom transport at all: DDS carries the real
-sensor_msgs/LaserScan and nav_msgs/Odometry across the WiFi link, and
-inf_server subscribes to them like any other ROS topic. This is the control
-condition -- "why not just use ROS 2?" -- that the other two are measured
-against.
-
-Why a relay node exists at all, when DDS could carry /scan directly:
-
-  * QoS. The drivers publish /scan RELIABLE, which is the single worst setting
-    for a lossy WiFi link: DDS will retransmit a scan that is already stale,
-    and under sustained loss those retransmissions crowd out fresh samples.
-    This node re-publishes under BEST_EFFORT + KEEP_LAST(1), so a lost scan
-    stays lost and the next one is current. That mirrors what inf_client_udp
-    gets for free from UDP, which is what makes the comparison fair.
-  * Blast radius. Only this node's participant is opened to the subnet; the
-    driver stack keeps its localhost-only discovery. So exactly one process
-    talks off-board, the same as the other two clients.
-  * Instrumentation. The siblings report scans/s, forwarded/dropped and
-    bandwidth. Without a node in the path there is nothing to report from, and
-    three transports with two sets of numbers cannot be compared.
-
-Discovery is NOT configured here -- it is process environment, so it lives in
-wifi_client.sh. This node only logs what it found in effect, so a captured run
-says how it was discovered as well as how it performed.
-
-Known asymmetry when reading the numbers against inf_client_udp: a LaserScan
-carries float32 ranges (4 B/bin), where the UDP wire format quantizes to uint16
-millimetres (2 B/bin). At 500 bins that is ~2 kB versus ~1 kB on the wire before
-either one has lost anything. Some of any bandwidth gap is that, not transport.
 """
 import os
 import time

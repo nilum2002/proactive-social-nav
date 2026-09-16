@@ -1,10 +1,4 @@
 """inf_client: forwards /scan and /odom to inf_server over gRPC.
-
-The robot is the gRPC CLIENT (reverse of lidar_grpc_bridge): it dials into
-inf_server and pushes an interleaved stream of SensorFrame messages built from
-its own /scan and /odom topics. inf_server runs DR-SPAAM + Kalman tracking on
-the other end; nothing is expected back on this call (client-streaming), so
-this node only uploads.
 """
 import os
 import queue

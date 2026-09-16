@@ -1,30 +1,4 @@
 """inf_client_udp: forwards /scan and /odom to inf_server_udp over UDP.
-
-The UDP sibling of inf_client. Same job -- the robot pushes its own /scan and
-/odom off-board so DR-SPAAM and the Kalman tracker can run on a real GPU -- but
-over datagrams instead of a gRPC stream, so the two can be benchmarked against
-each other on the same robot.
-
-What changes, and why:
-
-  * One scan is one datagram. Ranges are quantized to uint16 millimetres
-    (see wire.py), which puts a 450-bin sweep at ~953 B: under the 1472 B an
-    Ethernet MTU allows, so it never IP-fragments. That matters more than the
-    bandwidth saving -- a fragmented scan is lost if *either* fragment is lost,
-    so fragmenting would roughly double the effective scan loss rate.
-  * There is no send queue. inf_client needed one because a gRPC stream applies
-    backpressure; UDP has none, so a queue could only ever add latency to data
-    whose entire value is being fresh. Frames go straight out from the callback
-    on a non-blocking socket, and the rare send-buffer-full is counted as a drop.
-  * Nothing is retransmitted. A scan that arrives 200 ms late is worse than one
-    that never arrives, because it would walk the server's tracker backwards.
-  * Odometry is different: it is ~50 B, so instead of retransmission it gets
-    redundancy -- every packet repeats the previous few samples. Losing a pose
-    then takes several consecutive drops. The server de-duplicates on timestamp.
-  * UDP has no congestion control and no delivery report. The server sends a
-    STATS packet back about once a second; that is both. If it reports sustained
-    loss, this node decimates its own scan rate rather than keep blasting a
-    link that is already dropping.
 """
 import os
 import random
@@ -58,11 +32,6 @@ class InfClientUdpNode(Node):
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("robot_name", "botzilla")
         self.declare_parameter("snd_buffer_kb", 512)
-        # IP DSCP for the outgoing packets. 34 (AF41) lands in the Wi-Fi video
-        # access category, which gets shorter contention windows than best
-        # effort and measurably cuts jitter on a busy AP. Left at 0 by default
-        # because some APs and switches reclassify or police marked traffic,
-        # which would be a surprising thing to opt someone into silently.
         self.declare_parameter("dscp", 0)
 
         # ── Session / liveness ──────────────────────────────────────────────
@@ -103,9 +72,6 @@ class InfClientUdpNode(Node):
         self._host, self._port = self._parse_address(self.server_address)
         self._odom_min_period = (1.0 / self.odom_max_rate_hz) if self.odom_max_rate_hz > 0 else 0.0
 
-        # A fresh random id per process start. The server keys tracker state on
-        # it, so a reboot resets tracking instead of resuming into a filter that
-        # still holds ghosts from before the robot was power-cycled.
         self._session_id = random.getrandbits(32)
 
         self._scan_seq = 0
@@ -132,8 +98,7 @@ class InfClientUdpNode(Node):
         self._decim_counter = 0
         self._start_mono = time.monotonic()
 
-        # Learned from the first scans and then announced. HELLO cannot carry
-        # them at startup because no scan has arrived yet.
+        
         self._scan_bins = 0
         self._laser_frame_id = ""
         self._scan_rate_hz = 0.0
@@ -157,10 +122,6 @@ class InfClientUdpNode(Node):
         self._rx_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._rx_thread.start()
 
-        # Announce before any sensor data. Waiting for the first keepalive tick
-        # meant that a server which replied to our very first scan flipped
-        # _server_seen before HELLO had ever gone out, so the robot stayed
-        # anonymous for the whole session.
         self._send_hello()
 
         self.create_timer(self.keepalive_period_s, self._keepalive)
@@ -290,9 +251,6 @@ class InfClientUdpNode(Node):
             angle_increment=msg.angle_increment,
             range_min=msg.range_min,
             range_max=msg.range_max,
-            # NaN/inf collapse to the no-return sentinel, which is the only
-            # reinterpretation this node does: it says "this beam gave nothing",
-            # and it stays the server's call what that means for detection.
             ranges_mm=wire.quantize_ranges(msg.ranges),
         )
         self._scan_seq += 1
@@ -328,9 +286,6 @@ class InfClientUdpNode(Node):
     def _odom_callback(self, msg):
         now = time.monotonic()
         if self._odom_min_period and (now - self._last_odom_sent) < self._odom_min_period:
-            # The server pairs odom to scans by nearest timestamp within a
-            # tolerance, so pushing poses far faster than that only costs
-            # bandwidth on a link the scans need.
             self._odom_throttled += 1
             return
         self._last_odom_sent = now
