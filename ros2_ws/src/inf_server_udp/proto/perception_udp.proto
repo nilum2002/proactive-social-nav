@@ -1,0 +1,100 @@
+// Perception stream over UDP: Robot (inf_client_udp) -> inf_server_udp
+//
+// Must stay byte-identical to the client's copy of this file -- both sides
+// generate their stubs from it independently, so a drift here is a silent
+// wire-format mismatch rather than a build error. The fixed binary header in
+// wire.py carries a version byte so a mismatch is caught before decoding.
+//
+// Every datagram is: [21-byte wire.py header][one message from this file].
+// No framing, no stream, no reassembly: one datagram is one complete unit of
+// meaning. That property is what makes loss handling tractable, and it is the
+// reason `ranges_mm` below is `bytes` and not `repeated`.
+//
+// Regenerate with (from the package root):
+//   python3 -m grpc_tools.protoc -I proto --python_out=inf_server_udp \
+//       proto/perception_udp.proto
+
+syntax = "proto3";
+
+package perception_udp;
+
+// One LiDAR revolution, quantized to fit a single datagram.
+//
+// `ranges_mm` is a raw little-endian uint16 array, one entry per beam, in
+// millimetres. It is `bytes` rather than `repeated uint32` deliberately: proto3
+// has no uint16, and packed varints are content-dependent in size (20000 costs
+// 3 bytes, 100 costs 1). A variable-size scan payload would make datagram size
+// depend on what the room looks like, putting the "one scan = one datagram"
+// guarantee at the mercy of the scene. As `bytes` it is exactly 2*N, always.
+//
+// 0 means "no return" (the sensor's NaN/inf). 0 mm is physically impossible
+// given range_min, so the sentinel is unambiguous and costs no extra field.
+// Quantizing to 1 mm is an order of magnitude finer than the LD19's own
+// +/-1-2% accuracy, so it is lossless in every sense that matters here.
+message ScanPacket {
+  double timestamp = 1;       // seconds; from the source LaserScan header stamp
+  float angle_min = 2;        // rad
+  float angle_max = 3;        // rad
+  float angle_increment = 4;  // rad between consecutive samples
+  float range_min = 5;        // m
+  float range_max = 6;        // m
+  bytes ranges_mm = 7;        // little-endian uint16[], millimetres, 0 = no return
+}
+
+// (nav_msgs/Odometry + tf odom->base_link), same fields as the gRPC path's
+// OdometryData so both transports agree on what "odometry" means on the wire.
+message OdomSample {
+  double timestamp = 1;  // seconds
+  double x = 2;          // m, odom frame
+  double y = 3;          // m, odom frame
+  double qz = 4;         // orientation quaternion z (planar yaw only)
+  double qw = 5;         // orientation quaternion w
+  double vx = 6;         // m/s, base_link-frame forward velocity
+  double vtheta = 7;     // rad/s, yaw rate
+}
+
+// Odometry is tiny (~48 B/sample), so it buys redundancy instead of relying on
+// retransmission: each packet repeats the previous few samples. Losing a pose
+// then takes several consecutive drops rather than one. samples[0] is the
+// newest; the rest are copies already sent in earlier packets, and the receiver
+// de-duplicates on timestamp.
+message OdomPacket {
+  repeated OdomSample samples = 1;
+}
+
+// Opens a session. The server allocates fresh tracker state per session_id, so
+// a robot reboot (new session_id from the same address) resets tracking rather
+// than resuming into a stale filter -- the thing a TCP disconnect gave for free.
+message HelloPacket {
+  string robot_name = 1;
+  uint32 scan_bins = 2;       // expected len(ranges_mm)/2; mismatch is logged
+  double scan_rate_hz = 3;    // nominal, for the receiver's loss accounting
+  string laser_frame_id = 4;
+}
+
+// Sent while otherwise idle so the reaper can tell "quiet" from "gone".
+message HeartbeatPacket {
+  double timestamp = 1;
+}
+
+// Server -> client, roughly once a second. UDP has no congestion control and no
+// delivery report; this is both. The client logs it, and may use loss_ratio to
+// back off (send every Nth scan) rather than keep blasting a saturated link.
+message StatsPacket {
+  uint64 scans_received = 1;
+  uint64 scans_lost = 2;      // inferred from sequence gaps
+  uint64 scans_reordered = 3; // arrived after a newer scan; dropped, not buffered
+  double loss_ratio = 4;      // over the whole session
+  double jitter_ms = 5;       // RFC 3550 interarrival jitter estimate
+  double inference_fps = 6;
+  uint32 active_tracks = 7;
+  // Arrived intact, discarded because the detector was still busy. Distinct
+  // from scans_lost: this one says "slow down", not "the link is bad".
+  uint64 scans_dropped_busy = 8;
+}
+
+// Optional courtesy close, so the server can drop state without waiting out the
+// timeout. Never relied upon -- the reaper is the real teardown path.
+message ByePacket {
+  string reason = 1;
+}
