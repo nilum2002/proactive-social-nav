@@ -1,4 +1,5 @@
-## Proactive Social Navigation for 2D LiDAR Mobile Robots via DBN-Coupled Kalman Filtering for Dynamic Human Motion Prediction
+
+## A Real-Time 2D LiDAR-Based Person Detection and Tracking Pipeline for Resource-Constrained Autonomous Mobile Robots in Indoor Environments
 
 
-See the weekly updated here : [Link](https://github.com/nilum2002/proactive-social-nav/wiki/About-the-project.)
+Read me to be update soon
