@@ -70,9 +70,6 @@ class PipelinedPerceptionServicer(PerceptionServicer):
         with self._count_lock:
             self._client_count += 1
         self._logger.info(f"robot connected: {peer} (now {self.client_count} client(s))")
-
-        # Per connection, matching the sequential node: one tracker, and now one
-        # queue and one thread feeding it.
         tracker = MultiObjectTracker(**node.tracker_kwargs)
         work_q = queue.Queue(maxsize=node.queue_size)
         tracker_thread = threading.Thread(

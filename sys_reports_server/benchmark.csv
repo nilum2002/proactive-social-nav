@@ -1,0 +1,13 @@
+run,e2e_lat_ms_mean,e2e_lat_ms_sd,det_ms_mean,det_ms_sd,inference_ms_mean,inference_ms_sd,gpu_percent_mean,gpu_percent_sd
+gRPC static seq,51.0,17.68,48.86,17.7,48.57,17.7,24.47,8.52
+gRPC static pipelined,47.24,19.0,45.95,18.99,45.68,18.98,23.58,7.07
+gRPC moving seq,48.06,24.83,45.91,24.85,45.63,24.85,25.14,8.07
+gRPC moving pipelined,53.23,21.08,51.25,21.09,50.98,21.09,25.14,7.72
+UDP static seq,80.65,199.47,73.38,187.86,73.17,187.77,13.29,8.72
+UDP static pipelined,83.68,224.02,78.65,216.07,78.42,215.96,12.49,9.36
+UDP moving seq,89.61,223.88,84.28,218.65,84.05,218.54,16.68,9.07
+UDP moving pipelined,166.45,325.49,148.25,300.85,147.94,300.73,10.74,12.05
+WiFi static seq,151.79,322.36,144.34,313.18,143.83,313.18,20.98,8.38
+WiFi static pipelined,138.46,319.5,131.9,313.84,131.3,313.57,19.93,7.66
+WiFi moving seq,166.58,305.56,158.58,300.91,158.11,300.9,18.71,7.81
+WiFi moving pipelined,161.38,296.99,154.17,294.7,153.63,294.4,19.88,6.73

@@ -22,188 +22,13 @@ import csv
 import pandas as pd
 from dr_spaam.detector import Detector
 from benchmark.kalman_tracker import MultiObjectTracker
-
-try:
-    import pynvml
-except ImportError:
-    pynvml = None
+from benchmark.sys_report import (
+    TIMING_FIELDNAMES, WIRE_FIELDNAMES, GpuSampler, PerfStats, stat_ms)
 
 # protoc emits absolute imports (`import perception_stream_pb2`)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import perception_stream_pb2          # noqa: E402
 import perception_stream_pb2_grpc     # noqa: E402
-
-
-def _stat_ms(samples, fn):
-    """Reduce a list of second-valued samples to a rounded millisecond stat."""
-    if not samples:
-        return ""
-    return round(float(fn(samples)) * 1e3, 3)
-
-
-class GpuSampler:
-    """NVML view of the GPU DR-SPAAM is inferencing on.
-
-    Two different things are reported and they must not be confused when
-    reading the CSV: `gpu_util_percent` is device-wide -- the fraction of the
-    last NVML sample window in which *any* kernel was resident, so the desktop
-    compositor counts too -- while `gpu_proc_mem_mb` / `torch_*_mb` and the
-    duty cycle the node derives from inference time are attributable to this
-    process alone.
-    """
-
-    def __init__(self, logger, enabled=True):
-        self._logger = logger
-        self._handle = None
-        self._torch = None
-        self._pid = os.getpid()
-        self.name = "n/a"
-        self.index = -1
-
-        if not enabled:
-            return
-        if pynvml is None:
-            logger.warn("nvidia-ml-py (pynvml) not installed -- GPU columns will be blank")
-            return
-
-        try:
-            pynvml.nvmlInit()
-            self.index = self._detector_device_index()
-            self._handle = pynvml.nvmlDeviceGetHandleByIndex(self.index)
-            name = pynvml.nvmlDeviceGetName(self._handle)
-            self.name = name.decode() if isinstance(name, bytes) else name
-        except Exception as e:
-            self._handle = None
-            logger.warn(f"NVML unavailable ({e}) -- GPU columns will be blank")
-
-    def _detector_device_index(self):
-        """Sample the device torch actually put the model on, not blindly GPU 0."""
-        try:
-            import torch
-            self._torch = torch
-            if torch.cuda.is_available():
-                return torch.cuda.current_device()
-        except Exception:
-            pass
-        return 0
-
-    @property
-    def available(self):
-        return self._handle is not None
-
-    @staticmethod
-    def _optional(fn, scale=1.0):
-        """Power/temperature/clocks are unsupported on some (especially laptop)
-        GPUs; one unsupported metric must not blank out the whole row."""
-        try:
-            return round(fn() * scale, 2)
-        except Exception:
-            return ""
-
-    def _process_gpu_mem_mb(self):
-        """GPU memory NVML attributes to this PID. Reported separately from the
-        device total because other processes share the card."""
-        try:
-            for p in pynvml.nvmlDeviceGetComputeRunningProcesses(self._handle):
-                if p.pid == self._pid and p.usedGpuMemory is not None:
-                    return round(p.usedGpuMemory / 1024**2, 1)
-        except Exception:
-            return ""
-        return 0.0
-
-    def sample(self):
-        row = {
-            "gpu_util_percent": "",
-            "gpu_mem_util_percent": "",
-            "gpu_mem_used_mb": "",
-            "gpu_mem_total_mb": "",
-            "gpu_proc_mem_mb": "",
-            "gpu_power_w": "",
-            "gpu_temp_c": "",
-            "gpu_sm_clock_mhz": "",
-            "torch_alloc_mb": "",
-            "torch_reserved_mb": "",
-            "torch_peak_mb": "",
-        }
-
-        if self.available:
-            try:
-                util = pynvml.nvmlDeviceGetUtilizationRates(self._handle)
-                mem = pynvml.nvmlDeviceGetMemoryInfo(self._handle)
-                row["gpu_util_percent"] = float(util.gpu)
-                row["gpu_mem_util_percent"] = float(util.memory)
-                row["gpu_mem_used_mb"] = round(mem.used / 1024**2, 1)
-                row["gpu_mem_total_mb"] = round(mem.total / 1024**2, 1)
-                row["gpu_proc_mem_mb"] = self._process_gpu_mem_mb()
-                row["gpu_power_w"] = self._optional(
-                    lambda: pynvml.nvmlDeviceGetPowerUsage(self._handle), 1e-3)
-                row["gpu_temp_c"] = self._optional(
-                    lambda: pynvml.nvmlDeviceGetTemperature(
-                        self._handle, pynvml.NVML_TEMPERATURE_GPU))
-                row["gpu_sm_clock_mhz"] = self._optional(
-                    lambda: pynvml.nvmlDeviceGetClockInfo(
-                        self._handle, pynvml.NVML_CLOCK_SM))
-            except Exception as e:
-                self._logger.warn(f"NVML sample failed: {e}", throttle_duration_sec=30.0)
-
-        # NVML sees the whole reserved pool, `memory_allocated` sees live tensors.
-        if self._torch is not None and self._torch.cuda.is_available():
-            try:
-                row["torch_alloc_mb"] = round(self._torch.cuda.memory_allocated() / 1024**2, 1)
-                row["torch_reserved_mb"] = round(self._torch.cuda.memory_reserved() / 1024**2, 1)
-                row["torch_peak_mb"] = round(self._torch.cuda.max_memory_allocated() / 1024**2, 1)
-            except Exception:
-                pass
-
-        return row
-
-    def shutdown(self):
-        if self.available:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-            self._handle = None
-
-
-class PerfStats:
-    """Per-scan timings recorded on gRPC pool threads, drained once per report
-    row. Raw samples are kept rather than an EMA so each row can carry an
-    honest mean/p95/max for the interval it covers."""
-
-
-    MAX_SAMPLES = 20000
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._inference_s = []
-        self._predict_s = []
-        self._service_s = []
-        self._wire_s = []
-
-    def record_inference(self, inference_s, predict_s=None):
-        with self._lock:
-            if len(self._inference_s) < self.MAX_SAMPLES:
-                self._inference_s.append(inference_s)
-                # Kept in its own list, not paired with the one above: a detector
-                # that has not been instrumented reports nothing, and the forward
-                # pass column must go blank without blanking the total as well.
-                if predict_s is not None:
-                    self._predict_s.append(predict_s)
-
-    def record_service(self, service_s, wire_s):
-        with self._lock:
-            if len(self._service_s) < self.MAX_SAMPLES:
-                self._service_s.append(service_s)
-                self._wire_s.append(wire_s)
-
-    def drain(self):
-        with self._lock:
-            snapshot = (self._inference_s, self._predict_s,
-                        self._service_s, self._wire_s)
-            self._inference_s, self._predict_s = [], []
-            self._service_s, self._wire_s = [], []
-        return snapshot
 
 
 class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
@@ -250,19 +75,23 @@ class PerceptionServicer(perception_stream_pb2_grpc.PerceptionServiceServicer):
 
                 scan_pb = frame.scan
                 dt = 0.1
+                gap = None
                 if last_scan_time is not None:
-                    candidate = scan_pb.timestamp - last_scan_time
-                    if 0.0 < candidate <= 2.0:
-                        dt = candidate
+                    # T_scan is the raw gap, reported even when it falls outside the range the filter is willing to accept as dt:
+                    # a stalled or clock-jumped source is exactly what it is
+                    # there to make visible.
+                    gap = scan_pb.timestamp - last_scan_time
+                    if 0.0 < gap <= 2.0:
+                        dt = gap
                 last_scan_time = scan_pb.timestamp
 
                 self._node.republish_scan(scan_pb)
-                self._node.process_scan(scan_pb, latest_odom, tracker, dt)
+                self._node.process_scan(scan_pb, latest_odom, tracker, dt,
+                                        arrival_t=arrival_t, scan_gap_s=gap)
 
-                self._node.record_service_latency(
-                    service_s=time.perf_counter() - arrival_t,
-                    wire_s=arrival_wall - scan_pb.timestamp,
-                )
+                # T_lat is closed out inside process_scan; only the wire
+                # estimate needs the wall clock taken at arrival.
+                self._node.record_wire_latency(arrival_wall - scan_pb.timestamp)
                 scans_processed += 1
         finally:
             with self._count_lock:
@@ -464,15 +293,31 @@ class InfServerNode(Node):
         msg.ranges = list(scan_pb.ranges)
         self._scan_pub.publish(msg)
 
-    def process_scan(self, scan_pb, latest_odom, tracker, dt):
-        """Run detection + tracking for one scan. Called from a gRPC pool thread."""
+    def process_scan(self, scan_pb, latest_odom, tracker, dt,
+                     arrival_t=None, scan_gap_s=None):
+        """Run detection + tracking for one scan. Called from a gRPC pool thread.
+
+        Detection and tracking are timed separately even though they run back
+        to back here, so a sequential run reports the same T_det / T_track
+        split as a pipelined one and the two can be compared directly. t0 is
+        taken before the lock so T_det carries the wait for it, which is where
+        contention between concurrent clients shows up.
+        """
+        t0 = time.perf_counter()
         with self._process_lock:
             dets_xy = self._detect(scan_pb)
             dets_xy, frame_id = self._to_tracking_frame(dets_xy, latest_odom)
+            t1 = time.perf_counter()
             active_tracks = tracker.step(dt, dets_xy)
 
         self._publish_detections_marker(dets_xy, frame_id)
         self._publish_ros(frame_id, active_tracks)
+        t2 = time.perf_counter()
+
+        self._perf.record_detect(t1 - t0, scan_gap_s=scan_gap_s)
+        # Closed out after the publishes, so T_lat is arrival -> actually out.
+        self._perf.record_track(t2 - t1,
+                                (t2 - arrival_t) if arrival_t is not None else None)
 
         self._scan_count += 1
         self._scans_since_log += 1
@@ -610,9 +455,15 @@ class InfServerNode(Node):
 
     # ── Resource / performance report ───────────────────────────────────────
 
-    def record_service_latency(self, service_s, wire_s):
-        """Called from the gRPC pool thread once a scan is fully handled."""
-        self._perf.record_service(service_s, wire_s)
+    def record_wire_latency(self, wire_s):
+        """Server wall clock at arrival minus the robot's own scan timestamp.
+
+        Called from the gRPC pool thread in both variants. An estimate, not a
+        measurement: the two clocks are not synchronised, so a constant offset
+        rides on every sample. Kept out of the T_* set for that reason -- the
+        T_* figures are all differences taken on one machine's clock.
+        """
+        self._perf.record_wire(wire_s)
 
     @staticmethod
     def _find_report_dir():
@@ -630,11 +481,7 @@ class InfServerNode(Node):
             d = parent
 
     def _open_sys_report(self):
-        """Open the CSV named by the service_log_file parameter. The header is
-        written up front so a run that is killed mid-stream still leaves a
-        readable file."""
-        # basename() because the parameter carries a leading '/' -- it names the
-        # file inside sys_reports_server, it is not an absolute path.
+        "Save reports"
         name = os.path.basename(self.service_log_file) or "inf_server_service_log.csv"
         report_dir = self._find_report_dir()
         self._report_path = os.path.join(report_dir, name)
@@ -668,20 +515,12 @@ class InfServerNode(Node):
             "wall_time", "elapsed_s", "clients",
             # DR-SPAAM throughput
             "scans_total", "scans_in_window", "scan_rate_hz", "drspaam_fps",
-            # inference_ms_* is the whole Detector.__call__ (cutout preprocessing
-            # + forward + NMS); predict_ms_* is the network forward pass alone.
-            # The difference between the two means is the CPU-side work.
-            "inference_ms_mean", "inference_ms_p95", "inference_ms_max",
-            "predict_ms_mean", "predict_ms_p95", "predict_ms_max",
-            # gRPC latency
-            "grpc_service_ms_mean", "grpc_service_ms_p95", "grpc_service_ms_max",
-            "grpc_wire_ms_mean", "grpc_wire_ms_p95",
-            # GPU
+            *TIMING_FIELDNAMES,
+            *WIRE_FIELDNAMES,
             "gpu_util_percent", "drspaam_gpu_duty_percent", "gpu_mem_util_percent",
             "gpu_mem_used_mb", "gpu_mem_total_mb", "gpu_proc_mem_mb",
             "torch_alloc_mb", "torch_reserved_mb", "torch_peak_mb",
             "gpu_power_w", "gpu_temp_c", "gpu_sm_clock_mhz",
-            # CPU / RAM / swap
             "cpu_percent_system", "cpu_percent_process", "proc_threads",
             "ram_used_mb", "ram_total_mb", "ram_percent", "proc_rss_mb",
             "swap_used_mb", "swap_total_mb", "swap_percent",
@@ -694,7 +533,8 @@ class InfServerNode(Node):
             return
         self._last_report_t = now
 
-        inference_s, predict_s, service_s, wire_s = self._perf.drain()
+        timings = self._perf.drain()
+        inference_s = timings["inference"]
         scans = self._scan_count - self._scan_count_at_report
         self._scan_count_at_report = self._scan_count
 
@@ -708,30 +548,7 @@ class InfServerNode(Node):
             "scans_total": self._scan_count,
             "scans_in_window": scans,
             "scan_rate_hz": round(scans / window_s, 2),
-            # Throughput the detector alone could sustain (1 / mean forward pass),
-            # which is above scan_rate_hz whenever the robot feeds scans slower
-            # than DR-SPAAM can consume them. Blank rather than 0 while no scans
-            # are arriving, so idle intervals do not drag the run averages down.
             "drspaam_fps": round(len(inference_s) / sum(inference_s), 2) if inference_s else "",
-            "inference_ms_mean": _stat_ms(inference_s, np.mean),
-            "inference_ms_p95": _stat_ms(inference_s, lambda a: np.percentile(a, 95)),
-            "inference_ms_max": _stat_ms(inference_s, np.max),
-            # Network forward pass only, GPU-synchronised inside the detector.
-            # Blank when running against a dr_spaam that does not expose it.
-            "predict_ms_mean": _stat_ms(predict_s, np.mean),
-            "predict_ms_p95": _stat_ms(predict_s, lambda a: np.percentile(a, 95)),
-            "predict_ms_max": _stat_ms(predict_s, np.max),
-            "grpc_service_ms_mean": _stat_ms(service_s, np.mean),
-            "grpc_service_ms_p95": _stat_ms(service_s, lambda a: np.percentile(a, 95)),
-            "grpc_service_ms_max": _stat_ms(service_s, np.max),
-            "grpc_wire_ms_mean": _stat_ms(wire_s, np.mean),
-            "grpc_wire_ms_p95": _stat_ms(wire_s, lambda a: np.percentile(a, 95)),
-            # Share of wall-clock time spent inside DR-SPAAM forward passes.
-            # Unlike gpu_util_percent this excludes every other GPU client on
-            # the machine, so it is the detector's own load on the card -- but
-            # read it as an upper bound: the timed call also covers the CPU-side
-            # pre/post-processing around the kernels, so it can sit above the
-            # device-wide util figure.
             "drspaam_gpu_duty_percent": round(100.0 * sum(inference_s) / window_s, 2)
                                         if inference_s else "",
             "cpu_percent_system": psutil.cpu_percent(interval=None),
@@ -746,14 +563,14 @@ class InfServerNode(Node):
             "swap_total_mb": round(sw.total / 1024**2, 1),
             "swap_percent": sw.percent,
         }
+        row.update(PerfStats.timing_row(timings))
+        row.update(PerfStats.wire_row(timings))
         row.update(self._gpu.sample())
 
         with self._report_lock:
             if self._report_writer is None:
                 return
             self._report_writer.writerow(row)
-            # Flushed every row: these runs are ended with Ctrl-C, and buffered
-            # rows would be lost exactly when the interesting part just happened.
             self._report_file.flush()
 
     def _close_sys_report(self):
@@ -786,9 +603,6 @@ class InfServerNode(Node):
         def avg(col):
             return df[col].mean() if col in df and df[col].notna().any() else float("nan")
 
-        # Derived from the mean forward pass rather than averaging the per-window
-        # FPS column, so the two figures printed side by side agree (the mean of
-        # 1/t is not 1/mean(t)).
         mean_inference_ms = avg("inference_ms_mean")
         fps = 1e3 / mean_inference_ms if mean_inference_ms else float("nan")
 
@@ -800,10 +614,12 @@ class InfServerNode(Node):
             f"  DR-SPAAM   {fps:.1f} FPS | "
             f"{mean_inference_ms:.2f} ms/scan | "
             f"GPU duty {avg('drspaam_gpu_duty_percent'):.1f}%\n"
-            f"             of which forward pass {avg('predict_ms_mean'):.2f} ms, "
-            f"pre/post {mean_inference_ms - avg('predict_ms_mean'):.2f} ms\n"
-            f"  gRPC       service {avg('grpc_service_ms_mean'):.2f} ms | "
-            f"p95 {avg('grpc_service_ms_p95'):.2f} ms\n"
+            f"  T_det {avg('t_det_ms_mean'):6.2f} ms   T_track {avg('t_track_ms_mean'):6.2f} ms   "
+            f"T_lat {avg('t_lat_ms_mean'):6.2f} ms (p95 {avg('t_lat_ms_p95'):.2f})   "
+            f"T_scan {avg('t_scan_ms_mean'):7.2f} ms\n"
+            f"  T_fwd {avg('t_fwd_ms_mean'):6.2f} ms   "
+            f"(pre/post {mean_inference_ms - avg('t_fwd_ms_mean'):.2f} ms)   "
+            f"wire~ {avg('wire_ms_mean'):.2f} ms\n"
             f"  GPU        util {avg('gpu_util_percent'):.1f}% | "
             f"mem {avg('gpu_mem_used_mb'):.0f} MB | {avg('gpu_power_w'):.1f} W\n"
             f"  Host       CPU {avg('cpu_percent_system'):.1f}% | "
@@ -816,13 +632,13 @@ class InfServerNode(Node):
         self.get_logger().info(
             f"[inf_server] {self._servicer.client_count} client(s) | "
             f"{rate:.1f} scans/s (pipeline) | {self.inference_fps:.1f} FPS (DR-SPAAM) | "
-            f"{self._scan_count} total"
+            f"{self._scan_count} total\n"
+            + self._perf.console_block(self._perf.drain_console())
         )
 
     def shutdown(self):
         self.get_logger().info("Stopping gRPC server...")
         self._server.stop(grace=1.0).wait()
-        # After the server is down, so no pool thread can still be recording.
         self._close_sys_report()
         self._gpu.shutdown()
 

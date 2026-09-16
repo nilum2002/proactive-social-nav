@@ -9,6 +9,26 @@ PyYAML
 tensorboardX
 python-lzf
 typeguard
+
+# ROS2 benchmark package (ros2_ws/src/benchmark) + sys_reports_server analysis
+grpcio
+grpcio-tools          # build-time only: regenerating *_pb2*.py from proto/
+protobuf
+psutil
+nvidia-ml-py          # provides the `pynvml` module used by sys_report.py
+pandas
+
+# ROS specific dependencies for the benchmark package (installed via apt / rosdep)
+# rclpy
+# std_msgs
+# nav_msgs
+# tf2_ros
+# ament_index_python
+# ament_copyright / ament_flake8 / ament_pep257   # test/ only
+
+# Local packages (installed from this repo, not PyPI)
+# dr_spaam   -> pip install -e dr_spaam/
+
 # Optional / Development
 # mayavi  # Only required for 3D visualization tests (e.g., test_jrdb_handle_mayavi.py)
 

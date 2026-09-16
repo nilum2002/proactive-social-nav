@@ -31,6 +31,10 @@ setup(
         'console_scripts': [
             'grpc_server_node = benchmark.grpc_server_node:main',
             'grpc_pipelined_node = benchmark.grpc_pipelined_node:main',
+            'udp_server_node = benchmark.udp_server_node:main',
+            'udp_pipelined_node = benchmark.udp_pipelined_node:main',
+            'wifi_server_node = benchmark.wifi_server_node:main',
+            'wifi_pipelined_node = benchmark.wifi_pipelined_node:main',
         ],
     },
 )

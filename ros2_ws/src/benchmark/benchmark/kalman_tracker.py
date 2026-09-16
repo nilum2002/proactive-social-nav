@@ -1,10 +1,4 @@
-"""Multi-pedestrian Kalman tracking, decoupled from ROS and gRPC.
-
-Ported from dr_spaam_ros2's dr_spaam_tracker_node: same constant-velocity KF,
-Hungarian (or greedy) association, and static-object blacklist, but driven by
-direct step(dt, detections) calls instead of a topic subscription so it can run
-inside the gRPC servicer thread.
-"""
+"""Multi-pedestrian Kalman tracking, decoupled from ROS and gRPC. """
 import time
 
 import numpy as np

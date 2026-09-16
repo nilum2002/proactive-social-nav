@@ -1,0 +1,5 @@
+method,run,source_csv,windows_used,scans_covered,target_scans,reached_target,elapsed_s_covered
+udp,static / seq,udp/static_robot/seq/inf_server_service_log_udp_seq.csv,75,502.0,500,True,75.01
+udp,static / pipelined,udp/static_robot/pipelined/inf_server_service_log_udp_pipelined.csv,77,507.0,500,True,77.007
+udp,moving / seq,udp/moving_robot/seq/inf_server_service_log_udp_seq.csv,75,502.0,500,True,75.007
+udp,moving / pipelined,udp/moving_robot/pipelined/inf_server_service_log_udp_pipelined.csv,114,504.0,500,True,114.007

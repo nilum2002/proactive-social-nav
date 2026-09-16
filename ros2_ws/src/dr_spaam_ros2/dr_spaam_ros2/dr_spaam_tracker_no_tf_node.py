@@ -195,8 +195,7 @@ class DrSpaamTrackerNoTfNode(Node):
                 active_tracks.append(track)
         self.tracks = active_tracks
 
-        # Published directly in the sensor's own frame — no world_header, since there is
-        # no transform. header.frame_id is whatever the incoming detections used.
+        # Published directly in the sensor's own frame
         out_header = Header(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
 
         tracks_msg = PoseArray()
@@ -235,8 +234,7 @@ class DrSpaamTrackerNoTfNode(Node):
         marker_array = MarkerArray()
         lifetime = Duration(seconds=0.5).to_msg()
 
-        # No robot-position reference circle here — without TF there is no "robot position
-        # in this frame" concept; the sensor origin (0, 0) in its own frame is the robot.
+        # No robot-position reference circle here
         circle = Marker()
         circle.header = header
         circle.ns = "lidar_range_circle"

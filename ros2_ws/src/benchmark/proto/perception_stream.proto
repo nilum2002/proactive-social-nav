@@ -1,15 +1,4 @@
 // Perception stream: Robot -> inf_server
-//
-// Direction is the reverse of lidar_grpc_bridge: here the ROBOT is the client. It
-// dials into this server and pushes its /scan and /odom topics as an interleaved
-// stream of SensorFrame messages. The server runs DR-SPAAM detection and Kalman
-// tracking; results only go to this server's own ROS topics for now, so this is a
-// plain client-streaming call (no per-frame reply, no track data sent back).
-//
-// Regenerate with (venv active, from the package root):
-//   python -m grpc_tools.protoc -I proto --python_out=inf_server \
-//       --grpc_python_out=inf_server proto/perception_stream.proto
-
 syntax = "proto3";
 
 package perception;

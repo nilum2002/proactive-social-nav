@@ -13,57 +13,39 @@ from benchmark.grpc_server_node import (
 )
 from benchmark.kalman_tracker import MultiObjectTracker
 
-# arrival_t / det_s are carried through so stage 2 can close out the latency
-# measurement at publish time, when the frame is actually finished.
 WorkItem = collections.namedtuple(
-    "WorkItem", "dets_xy frame_id dt scan_timestamp arrival_t det_s"
+    "WorkItem", "dets_xy frame_id dt scan_timestamp arrival_t arrival_wall det_s"
 )
 
 
-class StageStats:
-    """Per-interval timings for the status log. Written from both stages, so
-    every access is under the lock; drained and reset on each report."""
+class QueueStats:
+    """Queue occupancy for the status log.
+
+    The T_* timings all live in the node's shared PerfStats, which is what
+    feeds the CSV as well; what is left here is the one thing that only
+    exists in a pipelined run -- how much depth the stage-1 -> stage-2 queue
+    is actually carrying, and how often it filled.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
         self.reset()
 
     def reset(self):
-        self.det_s = []
-        self.predict_s = []
-        self.track_s = []
-        self.lat_s = []
-        self.scan_gap_s = []
-        self.q_depth = []
-        self.q_full_events = 0
+        self.depth = []
+        self.full_events = 0
 
-    def record_detect(self, det_s, gap_s, depth, predict_s=None):
+    def record_depth(self, depth):
         with self._lock:
-            self.det_s.append(det_s)
-            # Not paired with det_s: an un-instrumented dr_spaam reports nothing,
-            # and T_fwd must go to zero without disturbing T_det.
-            if predict_s is not None:
-                self.predict_s.append(predict_s)
-            if gap_s is not None:
-                self.scan_gap_s.append(gap_s)
-            self.q_depth.append(depth)
+            self.depth.append(depth)
 
-    def record_track(self, track_s, lat_s):
+    def record_full(self):
         with self._lock:
-            self.track_s.append(track_s)
-            self.lat_s.append(lat_s)
-
-    def record_queue_full(self):
-        with self._lock:
-            self.q_full_events += 1
+            self.full_events += 1
 
     def drain(self):
         with self._lock:
-            snapshot = (
-                list(self.det_s), list(self.predict_s), list(self.track_s),
-                list(self.lat_s), list(self.scan_gap_s), list(self.q_depth),
-                self.q_full_events,
-            )
+            snapshot = (list(self.depth), self.full_events)
             self.reset()
         return snapshot
 
@@ -78,8 +60,6 @@ class PipelinedPerceptionServicer(PerceptionServicer):
             self._client_count += 1
         self._logger.info(f"robot connected: {peer} (now {self.client_count} client(s))")
 
-        # Per connection, matching the sequential node: one tracker, and now one
-        # queue and one thread feeding it.
         tracker = MultiObjectTracker(**node.tracker_kwargs)
         work_q = queue.Queue(maxsize=node.queue_size)
         tracker_thread = threading.Thread(
@@ -104,6 +84,7 @@ class PipelinedPerceptionServicer(PerceptionServicer):
                     continue
 
                 arrival_t = time.perf_counter()
+                arrival_wall = time.time()
                 scan_pb = frame.scan
 
                 dt = 0.1
@@ -125,11 +106,15 @@ class PipelinedPerceptionServicer(PerceptionServicer):
                     predict_s = getattr(node._detector, "last_predict_s", None)
                 det_s = time.perf_counter() - t0
 
-                node.stats.record_detect(det_s, gap, work_q.qsize(), predict_s)
+                # One sink for the numbers (PerfStats: CSV + status log,
+                # each with its own drain), one for queue occupancy.
+                node._perf.record_detect(det_s, fwd_s=predict_s, scan_gap_s=gap)
+                node.queue_stats.record_depth(work_q.qsize())
 
-                item = WorkItem(dets_xy, frame_id, dt, scan_pb.timestamp, arrival_t, det_s)
+                item = WorkItem(dets_xy, frame_id, dt, scan_pb.timestamp,
+                                arrival_t, arrival_wall, det_s)
                 if work_q.full():
-                    node.stats.record_queue_full()
+                    node.queue_stats.record_full()
                     self._logger.warn(
                         "tracker queue full: tracking is now the bottleneck, "
                         "detection will block", throttle_duration_sec=5.0,
@@ -164,7 +149,8 @@ class PipelinedPerceptionServicer(PerceptionServicer):
                 node._publish_detections_marker(item.dets_xy, item.frame_id)
                 node._publish_ros(item.frame_id, active_tracks)
                 now = time.perf_counter()
-                node.stats.record_track(now - t0, now - item.arrival_t)
+                node._perf.record_track(now - t0, now - item.arrival_t)
+                node.record_wire_latency(item.arrival_wall - item.scan_timestamp)
             except Exception as e:
                 self._logger.error(f"tracker stage failed on one frame: {e}")
 
@@ -172,7 +158,7 @@ class PipelinedPerceptionServicer(PerceptionServicer):
 class PipelinedInfServerNode(InfServerNode):
 
     def __init__(self):
-        self.stats = StageStats()
+        self.queue_stats = QueueStats()
         super().__init__(node_name="inf_server_pipelined_node")
         self.get_logger().info(
             f"  Pipelined variant: detection (stage 1) and tracking (stage 2) run\n"
@@ -188,23 +174,18 @@ class PipelinedInfServerNode(InfServerNode):
     def _log_status(self):
         rate = self._scans_since_log / self.status_log_period_s
         self._scans_since_log = 0
-        det, pred, track, lat, gap, depth, q_full = self.stats.drain()
+        depth, q_full = self.queue_stats.drain()
 
-        def ms(xs):
-            return (sum(xs) / len(xs)) * 1e3 if xs else 0.0
+        queue_line = (
+            f"    queue depth avg {sum(depth) / len(depth) if depth else 0.0:.2f} "
+            f"max {max(depth) if depth else 0}/{self.queue_size}"
+            + (f"   FULL x{q_full}" if q_full else "")
+        )
 
         self.get_logger().info(
             f"[inf_server-pipelined] {self._servicer.client_count} client(s) | "
             f"{rate:.1f} scans/s | {self._scan_count} total\n"
-            f"    T_det   {ms(det):6.2f} ms   T_track {ms(track):6.2f} ms   "
-            f"T_lat {ms(lat):6.2f} ms   T_scan {ms(gap):6.2f} ms\n"
-            # T_det minus T_fwd is the cutout/NMS work plus any wait on
-            # _process_lock, which is why the remainder grows with client count.
-            f"    T_fwd   {ms(pred):6.2f} ms   (forward pass; "
-            f"{ms(det) - ms(pred):6.2f} ms pre/post + lock wait)\n"
-            f"    queue depth avg {sum(depth) / len(depth) if depth else 0.0:.2f} "
-            f"max {max(depth) if depth else 0}/{self.queue_size}"
-            + (f"   FULL x{q_full}" if q_full else "")
+            + self._perf.console_block(self._perf.drain_console(), tail=queue_line)
         )
 
 

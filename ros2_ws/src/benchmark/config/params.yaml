@@ -18,7 +18,7 @@ inf_server_node:
     std_a_x: 0.9
     std_a_y: 0.9
     r_laser: 0.2
-    static_speed_threshold: 0.01
+    static_speed_threshold: 0.1
     static_frames_required: 15
 
     track_poses_topic: "~/track_poses"

@@ -1,0 +1,5 @@
+method,run,source_csv,windows_used,scans_covered,target_scans,reached_target,elapsed_s_covered
+grpc,static / seq,grpc/static_robot/seq/inf_server_service_log_seq.csv,51,508.0,500,True,51.012
+grpc,static / pipelined,grpc/static_robot/pipelined/inf_server_service_log_pipelined.csv,52,503.0,500,True,52.013
+grpc,moving / seq,grpc/moving_robot/seq/inf_server_service_log_seq.csv,51,507.0,500,True,51.012
+grpc,moving / pipelined,grpc/moving_robot/pipelined/inf_server_service_log_pipelined.csv,50,508.0,500,True,50.016

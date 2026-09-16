@@ -1,0 +1,39 @@
+inf_server_wifi_node:
+  ros__parameters:
+    weight_file: "/media/nilum/my-stuff/Research/Human_Robot_Interaction/proactive-social-nav/frog_dataset/dr_spaam_5_on_frog.pth"
+    detector_model: "DR-SPAAM"
+    conf_thresh: 0.8
+    stride: 1
+    panoramic_scan: false
+    gpu: true
+
+    status_log_period_s: 5.0
+
+    association_threshold: 1.0
+    max_lost_frames: 10
+    std_a_x: 0.9
+    std_a_y: 0.9
+    r_laser: 0.2
+    static_speed_threshold: 0.01
+    static_frames_required: 15
+
+    track_poses_topic: "~/track_poses"
+    markers_topic: "~/markers"
+    detections_marker_topic: "~/detection_markers"
+    scan_topic: "~/scan"
+    laser_frame_id: "laser"
+    republish_scan: true
+
+    # ── DDS link ───────────────────────────────────────────────────────────
+    in_scan_topic: "/wifi/scan"
+    in_odom_topic: "/wifi/odom"
+    input_reliability: "best_effort"
+    input_depth: 1
+    link_timeout_s: 5.0
+
+    odom_history: 32
+    odom_match_tolerance_s: 0.15
+
+    # ── Benchmark report ──────────────────────────────────────────────────
+    service_log_file: "/inf_server_service_log_wifi_seq.csv"
+    sys_report_period_s: 1.0

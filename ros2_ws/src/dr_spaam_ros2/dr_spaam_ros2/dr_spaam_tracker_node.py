@@ -161,12 +161,11 @@ class Track:
         self.kf.update(position)
         self.lost_count = 0
         self.age += 1
-        # Require confirm_frames consecutive matches before publishing — filters out DR-SPAAM
-        # spurious blips that appear for a few frames then vanish (walls, glass, passing objects).
+        # Require confirm_frames consecutive matches before publishing
         if self.state == "TENTATIVE" and self.age >= self.confirm_frames:
             self.state = "ACTIVE"
 
-        # Update smoothed velocity for prediction (EMA — does not affect KF state)
+        # Update smoothed velocity for prediction
         vx, vy = self.velocity
         self._smooth_vx = self._VEL_ALPHA * vx + (1.0 - self._VEL_ALPHA) * self._smooth_vx
         self._smooth_vy = self._VEL_ALPHA * vy + (1.0 - self._VEL_ALPHA) * self._smooth_vy
@@ -182,8 +181,7 @@ class Track:
             self.static_count = 0
             self.is_static = False
 
-        # Only classify as static after the track has had enough time to
-        # converge its velocity estimate (age > static_frames_required)
+        # Only classify as static after the track has had enough time to converge its velocity estimate (age > static_frames_required)
         if self.static_count >= static_frames_required and self.age > static_frames_required:
             self.is_static = True
 

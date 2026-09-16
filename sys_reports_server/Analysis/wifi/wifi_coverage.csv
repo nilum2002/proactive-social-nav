@@ -1,0 +1,5 @@
+method,run,source_csv,windows_used,scans_covered,target_scans,reached_target,elapsed_s_covered
+wifi,static / seq,wifi/static_robot/seq/inf_server_service_log_wifi_seq.csv,62,508.0,500,True,62.035
+wifi,static / pipelined,wifi/static_robot/pipelined/inf_server_service_log_wifi_pipelined.csv,60,508.0,500,True,60.034
+wifi,moving / seq,wifi/moving_robot/seq/inf_server_service_log_wifi_seq.csv,68,501.0,500,True,68.033
+wifi,moving / pipelined,wifi/moving_robot/pipelined/inf_server_service_log_wifi_pipelined.csv,67,500.0,500,True,67.037

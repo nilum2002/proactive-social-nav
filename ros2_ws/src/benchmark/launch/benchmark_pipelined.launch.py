@@ -16,9 +16,6 @@ def generate_launch_description():
         'pipelined_params.yaml'
     )
 
-    # The static TFs duplicate the ones in benchmark_server.launch.py. When both nodes
-    # run at once for an A/B comparison only one set may be active, otherwise two
-    # publishers fight over the same map->odom and base_link->laser transforms.
     publish_tf = LaunchConfiguration('publish_static_tf')
 
     return LaunchDescription([
